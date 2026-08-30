@@ -147,6 +147,10 @@ convert_character:
     bne +
     lda #$5f
     rts
++   cmp #39         ; apostrophe. Without this it falls to the digit case
+    bne +           ; below and converts to $f7, which the NMI treats as
+    lda #$40        ; "no tile" - the character silently disappears.
+    rts
 +   cmp #97
     bcc +
     sec
