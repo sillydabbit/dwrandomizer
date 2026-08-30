@@ -321,6 +321,10 @@ handle_instruction:
     jsr bin_to_bcd
     ldx #2
     jsr print_bcd_x
+    rts                     ; without this the handler falls through into
+                            ; the remaining opcode comparisons, and only
+                            ; works because the accumulator happens to
+                            ; hold a PPU address high byte ($20-$23)
 
 +next_instr:
     cmp #INSTR_SHOW_NUMBER
