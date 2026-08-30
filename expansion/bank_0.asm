@@ -4,6 +4,7 @@ FILLVALUE $ff
 CURRENT_TILE  EQU $E0
 SELECTED_ITEM EQU $D7
 ITEMS         EQU $C1
+ITEM_TIMES    EQU $6760 ; item discovery timestamps: 10 slots, 3 bytes each
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks

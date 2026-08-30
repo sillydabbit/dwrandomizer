@@ -26,10 +26,25 @@
     MINUTES        .dsb 1
     HOURS          .dsb 1
 .ende
+.enum $60
+    SORT_LIST      .dsb 10 ; item discovery timestamps: sorted slot indices
+    SORT_COUNT     .dsb 1
+    SORT_ROW       .dsb 1
+    NAME_PTR       .dsb 2
+    CUR_SLOT       .dsb 1
+    CMP_SLOT_A     .dsb 1
+    CMP_SLOT_B     .dsb 1
+    OFF_A          .dsb 1
+    OFF_B          .dsb 1
+    I_IDX          .dsb 1
+    J_IDX          .dsb 1
+    ROW_START      .dsb 2
+.ende
 
 NMI_INIT_PPU       EQU %00010000
 NMI_SKIP_TILE      EQU #$f7
 
+INSTR_ITEM_TIMES   EQU $f5
 INSTR_PLAY_TIME    EQU $f6
 INSTR_MON_STAT     EQU $f7
 INSTR_LOAD_CHR     EQU $f8
@@ -98,6 +113,10 @@ IFDEF test_frames
     sta $6f00,x
 ENDIF
 
+    lda #<$6f00
+    sta TMP_ADDR
+    lda #>$6f00
+    sta TMP_ADDR+1
     jsr calculate_play_time
 ;     lda #1
 ;     ldx #<sounds
@@ -147,9 +166,9 @@ convert_character:
     bne +
     lda #$5f
     rts
-+   cmp #39         ; apostrophe. Without this it falls to the digit case
-    bne +           ; below and converts to $f7, which the NMI treats as
-    lda #$40        ; "no tile" - the character silently disappears.
++   cmp #39         ; apostrophe
+    bne +
+    lda #$40
     rts
 +   cmp #97
     bcc +
@@ -325,10 +344,7 @@ handle_instruction:
     jsr bin_to_bcd
     ldx #2
     jsr print_bcd_x
-    rts                     ; without this the handler falls through into
-                            ; the remaining opcode comparisons, and only
-                            ; works because the accumulator happens to
-                            ; hold a PPU address high byte ($20-$23)
+    rts
 
 +next_instr:
     cmp #INSTR_SHOW_NUMBER
@@ -361,7 +377,13 @@ handle_instruction:
     rts
 
 +next_instr:
-    cmp #INSTR_FINISH 
+    cmp #INSTR_ITEM_TIMES
+    bne +next_instr
+    jsr render_item_times
+    rts
+
++next_instr:
+    cmp #INSTR_FINISH
     bne +
     lda #<stats_data        ; we've reached the end of the script, so return
     sta STATS_ADDR          ; to the beginning
@@ -415,6 +437,309 @@ add_stats_addr:             ; adds A to the script pointer
     lda STATS_ADDR+1
     adc #0
     sta STATS_ADDR+1
+    rts
+
+; *** Item discovery timestamps: display ***
+; ITEM_TIMES (bank_0.asm, $6760) holds ITEM_ROW_COUNT write-once entries of
+; 3 bytes each: a 24-bit little-endian copy of the live play-time frame
+; counter at $662c, taken the first time that item is acquired. An all-zero
+; entry means "never acquired" and is skipped. Bank 3 writes them
+; (record_item_time / record_item_time_for_slot); nothing else in the ROM
+; writes this region.
+;
+; Slot order below is fixed and must stay in step with item_slot_table in
+; bank_3_patch.asm, which maps an item id to a slot. Display order is not
+; this order - INSTR_ITEM_TIMES sorts by timestamp at render time.
+;
+;   slot  item                 acquired via
+;   ----  -------------------  ---------------------------------------
+;     0   Erdrick's Sword      equipment byte $be  (grant_erdricks_sword)
+;     1   Erdrick's Armor      equipment byte $be  (grant_erdricks_armor)
+;     2   Silver Harp          inventory (sort_inventory)
+;     3   Stones of Sunlight   inventory
+;     4   Erdrick's Token      inventory
+;     5   Death Necklace       inventory
+;     6   Fairy Flute          inventory
+;     7   Staff of Rain        inventory
+;     8   Rainbow Drop         inventory (NPC grant)
+;     9   Fighter's Ring       inventory
+;
+; To add an item: bump ITEM_ROW_COUNT, append to SLOT_OFFSET, name_offset
+; and item_names here, add its id to item_slot_table in bank_3_patch.asm,
+; and widen SORT_LIST in the zero-page enum. A page holds 10 rows at the
+; current double spacing, so an 11th needs a second page or tighter rows.
+
+; ITEM_TIMES is declared in bank_0.asm (shared constants, included first).
+ITEM_ROW_ADDR  EQU $2102   ; first item row, name column (row 8, col 2)
+ITEM_ROW_COUNT EQU 10      ; rows 8,10..26 - fills the page exactly
+ITEM_ROW_WIDTH EQU 30      ; tiles blanked per row (cols 2-31), enough to
+                           ; erase whatever page was displayed before
+ITEM_NAME_WIDTH EQU 18     ; the name field on an item row
+ITEM_TIME_GAP  EQU 2       ; blank tiles between the 18-char padded name and
+                           ; the time, which render_hms prints 8 wide
+
+SLOT_OFFSET:               ; slot -> byte offset into ITEM_TIMES (slot * 3)
+    .db 0, 3, 6, 9, 12, 15, 18, 21, 24, 27
+
+name_offset:               ; slot -> byte offset into item_names (slot * 18)
+    .db 0, 18, 36, 54, 72, 90, 108, 126, 144, 162
+
+item_names:
+    .db "Erdrick's Sword   "
+    .db "Erdrick's Armor   "
+    .db "Silver Harp       "
+    .db "Stones of Sunlight"
+    .db "Erdrick's Token   "
+    .db "Death Necklace    "
+    .db "Fairy Flute       "
+    .db "Staff of Rain     "
+    .db "Rainbow Drop      "
+    .db "Fighter's Ring    "
+
+render_hms:                  ; TMP_ADDR = pointer to a 3-byte LE frame count;
+                              ; prints "H:MM:SS" at PPU_POSITION. The hour is
+                              ; always shown, even when zero: suppressing it
+                              ; would mix 5- and 7-character times in one column.
+    jsr calculate_play_time
+    lda #0
+    sta BCD_INPUT+1
+    lda HOURS
+    sta BCD_INPUT
+    jsr bin_to_bcd
+    jsr clear_bcd_zeros
+    ldx #2
+    jsr print_bcd_x
+
+    lda #$44
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+
+    lda MINUTES
+    sta BCD_INPUT
+    jsr bin_to_bcd
+    ldx #2
+    jsr print_bcd_x
+
+    lda #$44
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+
+    lda SECONDS
+    sta BCD_INPUT
+    jsr bin_to_bcd
+    ldx #2
+    jsr print_bcd_x
+    rts
+
+print_name_x:                ; NAME_PTR set, X = field width; prints exactly
+                              ; that many chars. Names are space padded to the
+                              ; field width so a short one erases the tail of
+                              ; whatever was there before. Clobbers X.
+    ldy #0
+@loop:
+    lda (NAME_PTR),y
+    jsr convert_character
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+    iny
+    dex
+    bne @loop
+    rts
+
+blank_row:                   ; blanks ITEM_ROW_WIDTH tiles from PPU_POSITION,
+                              ; clearing the full width of one row
+    ldx #ITEM_ROW_WIDTH
+@loop:
+    lda #$5f
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+    dex
+    bne @loop
+    rts
+
+slot_time_lt:                ; CMP_SLOT_A, CMP_SLOT_B = slot numbers.
+                              ; Returns A=1 if time[A] < time[B], else A=0.
+                              ; 24-bit compare, high byte first; equal values
+                              ; return 0 so the insertion sort stays stable.
+    lda CMP_SLOT_A
+    tax
+    lda SLOT_OFFSET,x
+    sta OFF_A
+    lda CMP_SLOT_B
+    tax
+    lda SLOT_OFFSET,x
+    sta OFF_B
+    ldx OFF_A
+    ldy OFF_B
+    lda ITEM_TIMES+2,x
+    cmp ITEM_TIMES+2,y
+    bcc @lt
+    bne @ge
+    lda ITEM_TIMES+1,x
+    cmp ITEM_TIMES+1,y
+    bcc @lt
+    bne @ge
+    lda ITEM_TIMES+0,x
+    cmp ITEM_TIMES+0,y
+    bcc @lt
+@ge:
+    lda #0
+    rts
+@lt:
+    lda #1
+    rts
+
+render_item_row:             ; A = slot number, PPU_POSITION at the row start.
+                              ; Draws the 18-char padded name, steps over the
+                              ; gap, then the timestamp.
+    sta CUR_SLOT
+    tax
+    lda name_offset,x
+    clc
+    adc #<item_names
+    sta NAME_PTR
+    lda #0
+    adc #>item_names
+    sta NAME_PTR+1
+    ldx #ITEM_NAME_WIDTH
+    jsr print_name_x          ; PPU_POSITION now at row_start+18
+    lda PPU_POSITION
+    clc
+    adc #ITEM_TIME_GAP
+    sta PPU_POSITION
+    lda PPU_POSITION+1
+    adc #0
+    sta PPU_POSITION+1        ; PPU_POSITION now at the time column
+    ldx CUR_SLOT
+    lda SLOT_OFFSET,x
+    clc
+    adc #<ITEM_TIMES
+    sta TMP_ADDR
+    lda #0
+    adc #>ITEM_TIMES
+    sta TMP_ADDR+1
+    jsr render_hms
+    rts
+
+render_item_times:            ; entry point for the INSTR_ITEM_TIMES opcode.
+                              ; Builds the list of acquired slots, sorts it by
+                              ; timestamp, then draws ITEM_ROW_COUNT rows -
+                              ; blanking each one first so nothing shows
+                              ; through from the previous page.
+    ; --- build the unsorted list of acquired slots ---
+    lda #0
+    sta CUR_SLOT
+    sta SORT_COUNT
+@build_loop:
+    lda CUR_SLOT
+    tax
+    lda SLOT_OFFSET,x
+    tax
+    lda ITEM_TIMES,x
+    ora ITEM_TIMES+1,x
+    ora ITEM_TIMES+2,x
+    beq @build_skip
+    ldy SORT_COUNT
+    lda CUR_SLOT
+    sta SORT_LIST,y
+    inc SORT_COUNT
+@build_skip:
+    inc CUR_SLOT
+    lda CUR_SLOT
+    cmp #ITEM_ROW_COUNT
+    bne @build_loop
+
+    ; --- insertion sort SORT_LIST[0..SORT_COUNT-1], earliest time first ---
+    lda SORT_COUNT
+    cmp #2
+    bcc @sort_done
+    lda #1
+    sta I_IDX
+@sort_outer:
+    lda I_IDX
+    cmp SORT_COUNT
+    bcs @sort_done
+    lda I_IDX
+    sta J_IDX
+@sort_inner:
+    lda J_IDX
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    sta CMP_SLOT_A
+    dex
+    lda SORT_LIST,x
+    sta CMP_SLOT_B
+    jsr slot_time_lt
+    cmp #0
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    pha
+    dex
+    lda SORT_LIST,x
+    ldy J_IDX
+    sta SORT_LIST,y
+    pla
+    sta SORT_LIST,x
+    dec J_IDX
+    jmp @sort_inner
+@sort_inner_done:
+    inc I_IDX
+    jmp @sort_outer
+@sort_done:
+
+    ; --- render all 9 rows: acquired items (sorted), blank otherwise ---
+    lda #<ITEM_ROW_ADDR
+    sta ROW_START
+    lda #>ITEM_ROW_ADDR
+    sta ROW_START+1
+    lda #0
+    sta SORT_ROW
+@row_loop:
+    lda ROW_START
+    sta PPU_POSITION
+    lda ROW_START+1
+    sta PPU_POSITION+1
+    jsr blank_row
+    lda ROW_START
+    sta PPU_POSITION
+    lda ROW_START+1
+    sta PPU_POSITION+1
+    lda SORT_ROW
+    cmp SORT_COUNT
+    bcs @row_next
+    ldx SORT_ROW
+    lda SORT_LIST,x
+    jsr render_item_row
+@row_next:
+    lda ROW_START
+    clc
+    adc #$40
+    sta ROW_START
+    lda ROW_START+1
+    adc #0
+    sta ROW_START+1
+    inc SORT_ROW
+    lda SORT_ROW
+    cmp #ITEM_ROW_COUNT
+    bne @row_loop
+
+    ; Restore the play-time variables. Every item row above ran
+    ; calculate_play_time against its own timestamp, which overwrites the
+    ; shared HOURS/MINUTES/SECONDS/FRAMES. The previous page's
+    ; INSTR_PLAY_TIME reads those, and the stats script loops forever, so
+    ; without this it would print the last item's time on every pass after
+    ; the first. (The old Play Time row happened to do this implicitly.)
+    lda #<$6f00
+    sta TMP_ADDR
+    lda #>$6f00
+    sta TMP_ADDR+1
+    jsr calculate_play_time
     rts
 
 credits_data:
@@ -748,6 +1073,25 @@ stats_data:
 
     .db INSTR_WAIT, 240
 
+    ; Item discovery timestamps page
+    ; Header is uppercase to match every other header row on this screen -
+    ; the header rows use a subpalette in which the font's main colour is
+    ; black, so mixed-case text renders unreadably there. The string is
+    ; padded to 30 chars (cols 2-31) so it fully erases whichever header was
+    ; there before it (the last monster page's, or "OTHER STATS" on the loop
+    ; back around), which would otherwise leave characters behind.
+    .db INSTR_SET_PPU
+    .word $20c2 ; PPU address
+    .db "KEY ITEMS             TIME    "
+
+    .db INSTR_ITEM_TIMES
+
+    ; Play Time is omitted here: row 26 is needed for the 10th item, and it
+    ; still lands last on the SPELL USAGE page that follows. The renderer
+    ; overwrites every row it uses, so no clear is needed.
+
+    .db INSTR_WAIT, 240
+
     .db INSTR_SET_PPU
     .word $20c2
     .db " SPELL USAGE"
@@ -882,16 +1226,20 @@ stats_data:
     .word $2353 ; PPU address
     .db INSTR_PLAY_TIME
 
+
     .db INSTR_WAIT, 240
     .db INSTR_FINISH
 
 stats_done:
         jmp stats_done
 
-calculate_play_time:
+calculate_play_time:     ; converts the 24-bit frame count at (TMP_ADDR) into
+                          ; HOURS/MINUTES/SECONDS/FRAMES
     ; divide frames into hours
     ldx #2
--   lda $6f00,x
+-   txa
+    tay
+    lda (TMP_ADDR),y
     sta DIVIDEND,x
     lda hours_divisor,x
     sta DIVISOR,x

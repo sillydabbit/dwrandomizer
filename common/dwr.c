@@ -2029,6 +2029,19 @@ void setup_expansion(dw_rom *rom)
     add_hook(rom, JSR, 0xf720, INIT_SAVE_RAM);
     add_hook(rom, JSR, 0xfee0, COUNT_FRAME);
 
+    /* Item discovery timestamps: Erdrick's Sword and Armor are written
+     * straight into the packed equipment byte $be and never reach an
+     * inventory slot, so they miss the SORT_INVENTORY hook that covers the
+     * other eight tracked items. Each site is a 6-byte
+     * "lda $be / ora #mask / sta $be"; replace it with a 3-byte JSR to a
+     * routine that does the same three instructions and then records the
+     * time, padding the remaining 3 bytes with NOPs. Both sites sit behind
+     * an "already have it?" check, so they only run on first acquisition. */
+    add_hook(rom, JSR, 0xe2a6, GRANT_ERDRICKS_SWORD);
+    nop(rom, 0xe2a9, 3);
+    add_hook(rom, JSR, 0xe2f6, GRANT_ERDRICKS_ARMOR);
+    nop(rom, 0xe2f9, 3);
+
     bank_3_patch(rom);
     fill_expansion(rom);
 
