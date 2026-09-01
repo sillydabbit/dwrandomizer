@@ -935,23 +935,35 @@ static void map_add_river(dw_map *map) {
 /**
  * Checks where keys are available for later placement of rimuldar
  *
+ * This rebuilds key_access from scratch rather than adding to it. chest_paths()
+ * fills in the flags during stair_shuffle(), but check_quest_items() runs after
+ * that and can swap a key into Charlock while moving a quest item out. A key
+ * behind the rainbow drop is not obtainable, so a flag left set from before the
+ * swap lets need_rimuldar() place Rimuldar on a land mass the player cannot
+ * reach, with no other way to buy keys, producing an unwinnable seed.
+ *
  * @param rom The rom struct
  */
 static void check_keys(dw_rom *rom)
 {
     dw_chest *chest, *chest_end;
+    size_t index;
 
     printf("Checking for key availability...\n");
     chest_end = rom->chests + CHEST_COUNT;
 
+    rom->map.key_access = 0;
     for ( chest = rom->chests; chest < chest_end; chest++) {
-        if (chest->item == KEY) {
-            switch(chest->map) {
-                case TANTEGEL_BASEMENT:
-                    rom->map.key_access |= KEY_IN_BASEMENT;
-                    break;
-            }
-        }
+        if (chest->item != KEY)
+            continue;
+        index = chest - rom->chests;
+        /* mark_chests() recorded which dungeon entrances reach this chest
+         * without needing a key in the low nibble of chest_access. The high
+         * nibble is the same set of entrances *with* keys, which says nothing
+         * about whether a key can be obtained, so it must not be included. */
+        rom->map.key_access |= rom->chest_access[index] & 0xf;
+        if (chest->map == TANTEGEL_BASEMENT)
+            rom->map.key_access |= KEY_IN_BASEMENT;
     }
 }
 
