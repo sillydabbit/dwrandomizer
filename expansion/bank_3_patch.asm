@@ -320,6 +320,49 @@ item_slot_table:        ; item id ($0-$f) -> ITEM_TIMES slot, $ff = untracked.
     .db $ff, $ff, $ff, $ff, $ff, $06, $09, $04
     .db $ff, $ff, $02, $05, $03, $07, $08, $ff
 
+; *** Spell learn timestamps ***
+; Records when each spell was learned, using the same 24-bit frame counter at
+; $662c as the item timestamps. Storage is 10 slots of 3 bytes at SPELL_TIMES,
+; inside the range init_save_ram clears, so 0 means "no timestamp".
+;
+; The hook replaces the "jsr $dbf0" in the level-up display loop that
+; show_spells_learned() writes at $eae6. That loop already walks newly learned
+; spells one at a time and is guarded against ones the player had, and a 3-byte
+; JSR for a 3-byte JSR shifts nothing.
+;
+; A spell learned at level 1 is granted at new-game init without a level-up, so
+; its slot stays zero. spell_level_table tells that apart from "not learned".
+
+record_spell_time:     ; A = spell index + 16, exactly as b3_dbf0 expects it
+    pha                ; b3_dbf0 needs A intact - it is the name table index
+    sec
+    sbc #16            ; A = spell index 0..9, in dw_spells order
+    sta $3c            ; b3_dbf0 clobbers $3c itself, so it is free scratch here
+    asl a
+    clc
+    adc $3c
+    tax                ; X = byte offset into SPELL_TIMES (index * 3)
+    lda SPELL_TIMES,x
+    ora SPELL_TIMES+1,x
+    ora SPELL_TIMES+2,x
+    bne +              ; already recorded - keep the first time, not the last
+    lda $662c
+    sta SPELL_TIMES,x
+    lda $662d
+    sta SPELL_TIMES+1,x
+    lda $662e
+    sta SPELL_TIMES+2,x
++   pla
+    jmp b3_dbf0        ; tail-call the routine whose JSR we replaced
+
+spell_level_table:     ; spell index -> the level at which that spell is learned.
+                       ; Filled in by setup_expansion() from rom->stats, which is
+                       ; where the randomizer records which spells each level
+                       ; grants. 0 means the spell is never learnable in this
+                       ; seed - Permanent Repel and No Hurtmore set the level to
+                       ; 255, so those bits never appear in the stats table.
+    .db 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
 .org $c4f5
 
 .org $c4f5

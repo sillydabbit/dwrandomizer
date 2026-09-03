@@ -5,6 +5,11 @@ CURRENT_TILE  EQU $E0
 SELECTED_ITEM EQU $D7
 ITEMS         EQU $C1
 ITEM_TIMES    EQU $6760 ; item discovery timestamps: 10 slots, 3 bytes each
+SPELL_TIMES   EQU $6790 ; spell learn timestamps: 10 slots, 3 bytes each.
+                        ; Not $677e (the obvious spot after ITEM_TIMES) because
+                        ; upstream dev-3.1's experimental autosave claims $6780,
+                        ; which would land inside that block. Both ranges sit
+                        ; inside what init_save_ram already clears.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks
@@ -30,6 +35,8 @@ OAMDMA     EQU $4014
 ; DW labels
 
 b3_e01b EQU $e01b
+b3_dbf0 EQU $dbf0 ; prepares a spell name for display; takes the spell's name
+                  ; index in A. record_spell_time tail-calls it.
 
 X_POS EQU $3A
 X_POS_2 EQU $8E

@@ -44,6 +44,7 @@
 NMI_INIT_PPU       EQU %00010000
 NMI_SKIP_TILE      EQU #$f7
 
+INSTR_SPELL_TIMES  EQU $f2
 INSTR_ITEM_TIMES   EQU $f5
 INSTR_PLAY_TIME    EQU $f6
 INSTR_MON_STAT     EQU $f7
@@ -383,6 +384,12 @@ handle_instruction:
     rts
 
 +next_instr:
+    cmp #INSTR_SPELL_TIMES
+    bne +next_instr
+    jsr render_spell_times
+    rts
+
++next_instr:
     cmp #INSTR_FINISH
     bne +
     lda #<stats_data        ; we've reached the end of the script, so return
@@ -498,6 +505,239 @@ item_names:
     .db "Staff of Rain     "
     .db "Rainbow Drop      "
     .db "Fighter's Ring    "
+
+; *** Spell acquisition page ***
+; Same shape as the item page: 10 rows on the same grid, under the header
+; "SPELL       LEVEL     TIME    " - name in cols 0-8, level right-aligned in
+; 13-16, time at 20-27.
+;
+; Names are the classic ones even when Modern Spell Names is on, matching the
+; existing SPELL USAGE page, which hardcodes them in its script.
+SPELL_NAME_WIDTH EQU 9     ; STOPSPELL is the longest spell name
+SPELL_LEVEL_GAP  EQU 9     ; end of the name (col 9) to the level (col 18)
+SPELL_TIME_GAP   EQU 2     ; end of the level (col 20) to the time (col 22)
+
+spell_name_offset:         ; spell index -> byte offset into spell_names
+    .db 0, 9, 18, 27, 36, 45, 54, 63, 72, 81
+
+spell_names:               ; dw_spells order, space padded to SPELL_NAME_WIDTH
+    .db "HEAL     "
+    .db "HURT     "
+    .db "SLEEP    "
+    .db "RADIANT  "
+    .db "STOPSPELL"
+    .db "OUTSIDE  "
+    .db "RETURN   "
+    .db "REPEL    "
+    .db "HEALMORE "
+    .db "HURTMORE "
+
+spell_time_lt:               ; CMP_SLOT_A, CMP_SLOT_B = spell indices.
+                              ; Returns A=1 if time[A] < time[B], else A=0.
+                              ; Same 24-bit compare as slot_time_lt, against
+                              ; SPELL_TIMES; equal values return 0 so the
+                              ; insertion sort stays stable and starting spells
+                              ; (all timestamp 0) keep dw_spells order.
+    lda CMP_SLOT_A
+    tax
+    lda SLOT_OFFSET,x
+    sta OFF_A
+    lda CMP_SLOT_B
+    tax
+    lda SLOT_OFFSET,x
+    sta OFF_B
+    ldx OFF_A
+    ldy OFF_B
+    lda SPELL_TIMES+2,x
+    cmp SPELL_TIMES+2,y
+    bcc @lt
+    bne @ge
+    lda SPELL_TIMES+1,x
+    cmp SPELL_TIMES+1,y
+    bcc @lt
+    bne @ge
+    lda SPELL_TIMES+0,x
+    cmp SPELL_TIMES+0,y
+    bcc @lt
+@ge:
+    lda #0
+    rts
+@lt:
+    lda #1
+    rts
+
+render_spell_row:            ; A = spell index, PPU_POSITION at the row start.
+    sta CUR_SLOT
+    tax
+    lda spell_name_offset,x
+    clc
+    adc #<spell_names
+    sta NAME_PTR
+    lda #0
+    adc #>spell_names
+    sta NAME_PTR+1
+    ldx #SPELL_NAME_WIDTH
+    jsr print_name_x          ; PPU_POSITION now at col 9
+
+    lda PPU_POSITION
+    clc
+    adc #SPELL_LEVEL_GAP
+    sta PPU_POSITION
+    lda PPU_POSITION+1
+    adc #0
+    sta PPU_POSITION+1        ; now at the level column
+
+    ldx CUR_SLOT
+    lda spell_level_table,x   ; lives in bank 3; the whole project assembles as
+                              ; one pass, so the label resolves directly
+    sta BCD_INPUT
+    lda #0
+    sta BCD_INPUT+1
+    jsr bin_to_bcd            ; deliberately no clear_bcd_zeros: keeping the
+                              ; leading zero right-aligns the column, so level 3
+                              ; prints "03" and lines up under level 16
+    ldx #2
+    jsr print_bcd_x           ; PPU_POSITION now at col 20
+
+    lda PPU_POSITION
+    clc
+    adc #SPELL_TIME_GAP
+    sta PPU_POSITION
+    lda PPU_POSITION+1
+    adc #0
+    sta PPU_POSITION+1        ; now at the time column
+
+    ldx CUR_SLOT
+    lda SLOT_OFFSET,x
+    clc
+    adc #<SPELL_TIMES
+    sta TMP_ADDR
+    lda #0
+    adc #>SPELL_TIMES
+    sta TMP_ADDR+1
+    jsr render_hms
+    rts
+
+render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
+                              ; Builds the list of learned spells, sorts it,
+                              ; then draws ITEM_ROW_COUNT full-width rows.
+    ; --- build the list of spells to show ---
+    ; Shown if it has a timestamp, or is learned at level 1 - those are granted
+    ; at new-game init without a level-up, so the hook never runs and the zero
+    ; timestamp is legitimate. Level 0 means not learnable in this seed
+    ; (Permanent Repel, No Hurtmore); a level with no timestamp means unreached.
+    lda #0
+    sta CUR_SLOT
+    sta SORT_COUNT
+@build_loop:
+    ldx CUR_SLOT
+    lda spell_level_table,x
+    beq @build_skip           ; never learnable in this seed
+    cmp #1
+    beq @build_add            ; starting spell - always show, at 0:00:00
+    ldx CUR_SLOT
+    lda SLOT_OFFSET,x
+    tax
+    lda SPELL_TIMES,x
+    ora SPELL_TIMES+1,x
+    ora SPELL_TIMES+2,x
+    beq @build_skip           ; learnable, but not learned yet
+@build_add:
+    ldy SORT_COUNT
+    lda CUR_SLOT
+    sta SORT_LIST,y
+    inc SORT_COUNT
+@build_skip:
+    inc CUR_SLOT
+    lda CUR_SLOT
+    cmp #ITEM_ROW_COUNT
+    bne @build_loop
+
+    ; --- insertion sort SORT_LIST[0..SORT_COUNT-1], earliest time first ---
+    lda SORT_COUNT
+    cmp #2
+    bcc @sort_done
+    lda #1
+    sta I_IDX
+@sort_outer:
+    lda I_IDX
+    cmp SORT_COUNT
+    bcs @sort_done
+    lda I_IDX
+    sta J_IDX
+@sort_inner:
+    lda J_IDX
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    sta CMP_SLOT_A
+    dex
+    lda SORT_LIST,x
+    sta CMP_SLOT_B
+    jsr spell_time_lt
+    cmp #0
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    pha
+    dex
+    lda SORT_LIST,x
+    ldy J_IDX
+    sta SORT_LIST,y
+    pla
+    sta SORT_LIST,x
+    dec J_IDX
+    jmp @sort_inner
+@sort_inner_done:
+    inc I_IDX
+    jmp @sort_outer
+@sort_done:
+
+    ; --- draw the rows: learned spells sorted, the rest left blank ---
+    lda #<ITEM_ROW_ADDR
+    sta ROW_START
+    lda #>ITEM_ROW_ADDR
+    sta ROW_START+1
+    lda #0
+    sta SORT_ROW
+@row_loop:
+    lda ROW_START
+    sta PPU_POSITION
+    lda ROW_START+1
+    sta PPU_POSITION+1
+    jsr blank_row
+    lda ROW_START
+    sta PPU_POSITION
+    lda ROW_START+1
+    sta PPU_POSITION+1
+    lda SORT_ROW
+    cmp SORT_COUNT
+    bcs @row_next
+    ldx SORT_ROW
+    lda SORT_LIST,x
+    jsr render_spell_row
+@row_next:
+    lda ROW_START
+    clc
+    adc #$40
+    sta ROW_START
+    lda ROW_START+1
+    adc #0
+    sta ROW_START+1
+    inc SORT_ROW
+    lda SORT_ROW
+    cmp #ITEM_ROW_COUNT
+    bne @row_loop
+
+    ; Restore the play-time variables: every row above ran calculate_play_time
+    ; against its own timestamp, overwriting the shared HOURS/MINUTES/SECONDS
+    ; that a later INSTR_PLAY_TIME reads. The script loops, so this must reset.
+    lda #<$6f00
+    sta TMP_ADDR
+    lda #>$6f00
+    sta TMP_ADDR+1
+    jsr calculate_play_time
+    rts
 
 render_hms:                  ; TMP_ADDR = pointer to a 3-byte LE frame count;
                               ; prints "H:MM:SS" at PPU_POSITION. The hour is
@@ -1074,6 +1314,19 @@ stats_data:
     .word $2342 ; PPU address
     .db "Dragonlord 2  "
     .db INSTR_MON_STAT, 39
+
+    .db INSTR_WAIT, 240
+
+    ; Spell acquisition page. Ordered before the item page so the run reads
+    ; chronologically and Play Time still lands last, on SPELL USAGE. Header is
+    ; uppercase and padded to 30 chars for the same reasons as the item page:
+    ; the header subpalette renders mixed case unreadably, and a short string
+    ; would leave the previous header's tail on screen.
+    .db INSTR_SET_PPU
+    .word $20c2 ; PPU address
+    .db "SPELL ACQUIRED LEVEL  TIME    "
+
+    .db INSTR_SPELL_TIMES
 
     .db INSTR_WAIT, 240
 

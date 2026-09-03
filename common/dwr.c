@@ -2007,6 +2007,48 @@ static void skip_vanilla_credits(dw_rom *rom)
  *
  * @param rom The rom struct
  */
+/**
+ * Publishes the level at which each spell is learned, for the stats screen.
+ *
+ * Writes 10 bytes to spell_level_table in bank 3 (SPELL_LEVEL_TABLE), one per
+ * spell in dw_spells order:
+ *
+ *     [0] HEAL   [1] HURT    [2] SLEEP     [3] RADIANT  [4] STOPSPELL
+ *     [5] OUTSIDE[6] RETURN  [7] REPEL     [8] HEALMORE [9] HURTMORE
+ *
+ * Each value is the lowest player level whose stats entry has that spell's bit
+ * set, or 0 if the spell is never learnable in this seed - Permanent Repel and
+ * No Hurtmore set the level to 255 in randomize_spells(), so those bits never
+ * appear in the table at all.
+ *
+ * The bit layout matches randomize_spells(): spell j occupies bit (j + 8) % 16
+ * of the 16-bit mask, so HEAL through REPEL are bits 8-15 and HEALMORE and
+ * HURTMORE are bits 0-1.
+ *
+ * The renderer needs this for more than display. A spell learned at level 1 is
+ * granted at new-game init without a level-up, so record_spell_time never runs
+ * for it and its timestamp stays zero - the same value as "never learned". The
+ * level distinguishes the two.
+ *
+ * @param rom The rom struct
+ */
+static void write_spell_levels(dw_rom *rom)
+{
+    uint8_t levels[HURTMORE + 1];
+    int i, j;
+
+    for (j = HEAL; j <= HURTMORE; j++) {
+        levels[j] = 0;
+        for (i = 0; i < 30; i++) {
+            if (rom->stats[i].spells & (1 << ((j + 8) % 16))) {
+                levels[j] = i + 1;   /* stats[i] is level i+1 */
+                break;
+            }
+        }
+    }
+    patch(rom, SPELL_LEVEL_TABLE, sizeof(levels), levels);
+}
+
 void setup_expansion(dw_rom *rom)
 {
     rom->header[4] = 8; /* set to 8 PRG banks */
@@ -2042,8 +2084,21 @@ void setup_expansion(dw_rom *rom)
     add_hook(rom, JSR, 0xe2f6, GRANT_ERDRICKS_ARMOR);
     nop(rom, 0xe2f9, 3);
 
+    /* Spell learn timestamps: show_spells_learned() rewrites the level-up
+     * display as a loop that walks each newly learned spell, and at $eaf3 calls
+     * "jsr $dbf0" to prepare that spell's name. The loop is guarded so it only
+     * runs for a spell the player did not already have, which makes it exactly
+     * the right place to timestamp. Retargeting its 3-byte JSR to a routine
+     * that records the time and then tail-calls $dbf0 needs no NOP padding and
+     * shifts no addresses. */
+    add_hook(rom, JSR, 0xeaf3, RECORD_SPELL_TIME);
+
     bank_3_patch(rom);
     fill_expansion(rom);
+
+    /* Must follow bank_3_patch(): that writes the whole bank-3 blob, including
+     * the zeroed placeholder this fills in. */
+    write_spell_levels(rom);
 
     int track = mt_rand(0, track_count - 1);
     add_music(rom, track);
