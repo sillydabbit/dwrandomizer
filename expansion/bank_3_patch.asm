@@ -236,12 +236,17 @@ count_frame:
     inc $662e
 ++  jmp $fdf4
 
-snapshot_timer:
+snapshot_timer:        ; freezes the final stats for the ending screen
     ldx #2
 -   lda $662c,x
     sta $6f00,x
     dex
     bpl -
+    lda $c7            ; the level the game was won at, frozen at the same
+    sta WIN_LEVEL      ; moment as the play time above. Not read when the stats
+    lda #0             ; screen draws: by the time the credits start $c7 has
+    sta WIN_LEVEL+1    ; been clobbered and reads back as $ff. The high byte is
+                       ; cleared so INSTR_SHOW_NUMBER reads a clean 16-bit value.
     jmp do_dialog_hi
 
 modify_run_rate:

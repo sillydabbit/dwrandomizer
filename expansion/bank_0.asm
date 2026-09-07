@@ -18,6 +18,12 @@ SPELL_STAMP   EQU $67b8 ; frame counter captured at the moment of a level-up,
                         ; per spell did not: the level-up display shows one
                         ; spell at a time and waits for the player between them,
                         ; so the stamps recorded message order, not level order.
+WIN_LEVEL     EQU $67bb ; the player's level when the game was won, 16-bit LE.
+                        ; Two bytes so the existing INSTR_SHOW_NUMBER opcode can
+                        ; print it - that reads a 16-bit value and renders it 4
+                        ; wide, right-aligned with leading zeros blanked, exactly
+                        ; like every other OTHER STATS figure. Frozen by
+                        ; snapshot_timer; inside what init_save_ram clears.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks
