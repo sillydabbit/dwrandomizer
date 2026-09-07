@@ -317,6 +317,20 @@ grant_erdricks_armor:  ; replaces the original 6-byte equip-write at $e2f6
     jsr record_item_time_for_slot
     rts
 
+; *** Step counter ***
+; Replaces the "lda $16 / cmp #$20" pair that begins each of the four
+; directional movement handlers (Right/Left/Down/Up Synced). The four call
+; sites are patched to "jsr step_counter" + nop, so this runs once per step,
+; then performs the original two instructions and returns. JSR/RTS do not
+; disturb flags, so the CMP result reaches the caller intact.
+step_counter:
+    inc STEP_COUNT
+    bne +
+    inc STEP_COUNT+1
++   lda $16             ; original code from the movement handler
+    cmp #$20
+    rts
+
 item_slot_table:        ; item id ($0-$f) -> ITEM_TIMES slot, $ff = untracked.
                         ; Ids are from notes/items.txt. Indexed after an
                         ; AND #$0f so it can never be read past its end.

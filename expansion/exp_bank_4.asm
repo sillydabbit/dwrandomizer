@@ -45,6 +45,7 @@ NMI_INIT_PPU       EQU %00010000
 NMI_SKIP_TILE      EQU #$f7
 
 INSTR_SPELL_TIMES  EQU $f2
+INSTR_SHOW_NUM5    EQU $f3
 INSTR_ITEM_TIMES   EQU $f5
 INSTR_PLAY_TIME    EQU $f6
 INSTR_MON_STAT     EQU $f7
@@ -361,6 +362,22 @@ handle_instruction:
     jsr print_bcd           ; print the last 4 digits of the BCD to the screen
     lda #2
     jsr add_stats_addr      ; Add 2 to the script pointer
+    rts
+
++next_instr:
+    cmp #INSTR_SHOW_NUM5
+    bne +next_instr
+    ldy #0                  ; same as INSTR_SHOW_NUMBER but 5 digits wide.
+    lda (STATS_ADDR),y      ; Kept as a separate opcode because widening the
+    sta TMP_ADDR            ; 4-digit one would push the monster and spell
+    iny                     ; pages past the 32-tile row.
+    lda (STATS_ADDR),y
+    sta TMP_ADDR + 1
+    jsr addr_to_bcd
+    ldx #5
+    jsr print_bcd_x         ; print all 5 BCD digits (max 65535)
+    lda #2
+    jsr add_stats_addr
     rts
 
 +next_instr:
@@ -1470,6 +1487,12 @@ stats_data:
     .db "Bonks    "
     .db INSTR_SHOW_NUMBER
     .word $663a ; Data address
+
+    .db INSTR_SET_PPU
+    .word $22d1 ; PPU address
+    .db "Steps   "      ; 8 chars, not 9: the 5-digit field then ends in the
+    .db INSTR_SHOW_NUM5  ; same column as the 4-digit numbers above it
+    .word STEP_COUNT ; Data address
 
     ; The level the run finished on, in the row the "Play Time" label used to
     ; occupy. Padded to the 9-char label field every other stat on this page

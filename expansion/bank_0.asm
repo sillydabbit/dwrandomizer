@@ -24,6 +24,7 @@ WIN_LEVEL     EQU $67bb ; the player's level when the game was won, 16-bit LE.
                         ; wide, right-aligned with leading zeros blanked, exactly
                         ; like every other OTHER STATS figure. Frozen by
                         ; snapshot_timer; inside what init_save_ram clears.
+STEP_COUNT    EQU $6804 ; step counter, 16-bit LE
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks

@@ -2084,6 +2084,20 @@ void setup_expansion(dw_rom *rom)
      * shifts no addresses. */
     add_hook(rom, JSR, 0xeaf3, RECORD_SPELL_TIME);
 
+    /* Step counter: hook the four directional movement handlers, each of
+     * which begins with the same "lda $16 / cmp #$20" pair (4 bytes).
+     * Replace it with a 3-byte JSR plus a NOP to keep the instruction
+     * stream aligned; step_counter performs those two instructions itself
+     * before returning, and JSR/RTS leave the flags from CMP intact.
+     * Only one handler runs per step, so steps are not double-counted. */
+    add_hook(rom, JSR, 0x3265, STEP_COUNTER);  /* RightSynced */
+    nop(rom, 0x3268, 1);
+    add_hook(rom, JSR, 0x335f, STEP_COUNTER);  /* LeftSynced  */
+    nop(rom, 0x3362, 1);
+    add_hook(rom, JSR, 0x33eb, STEP_COUNTER);  /* DownSynced  */
+    nop(rom, 0x33ee, 1);
+    add_hook(rom, JSR, 0x3517, STEP_COUNTER);  /* UpSynced    */
+    nop(rom, 0x351a, 1);
 
     bank_3_patch(rom);
     fill_expansion(rom);
