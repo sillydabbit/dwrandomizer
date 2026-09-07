@@ -355,14 +355,6 @@ record_spell_time:     ; A = spell index + 16, exactly as b3_dbf0 expects it
 +   pla
     jmp b3_dbf0        ; tail-call the routine whose JSR we replaced
 
-spell_level_table:     ; spell index -> the level at which that spell is learned.
-                       ; Filled in by setup_expansion() from rom->stats, which is
-                       ; where the randomizer records which spells each level
-                       ; grants. 0 means the spell is never learnable in this
-                       ; seed - Permanent Repel and No Hurtmore set the level to
-                       ; 255, so those bits never appear in the stats table.
-    .db 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-
 snapshot_spell_time:   ; Captures the frame counter at the instant of a level-up.
                        ; save_spells (written by show_spells_learned at $bfe0)
                        ; stashes the old spell mask and then jumps to $f050 to
@@ -376,24 +368,6 @@ snapshot_spell_time:   ; Captures the frame counter at the instant of a level-up
     lda $662e
     sta SPELL_STAMP+2
     jmp $f050          ; carry on with the level-up the hook interrupted
-
-copy_spell_levels:     ; Mirrors spell_level_table into SRAM, then falls through
-                       ; to the credits. Both credit entry points are retargeted
-                       ; here by dwr.c.
-                       ;
-                       ; This exists because bank 3 is NOT reachable from the
-                       ; stats screen. The renderer lives in bank 4, and while
-                       ; the credits run $c000-$ffff holds bank_7 (see the
-                       ; include order in credits.asm) - so a bank-4 "lda
-                       ; spell_level_table,x" reads bank 7 filler, not the table.
-                       ; This routine still runs with bank 3 mapped, and SRAM is
-                       ; mapped whatever the PRG bank, so the copy bridges them.
-    ldx #9
--   lda spell_level_table,x
-    sta SPELL_LEVELS,x
-    dex
-    bpl -
-    jmp start_dwr_credits
 
 .org $c4f5
 

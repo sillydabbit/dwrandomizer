@@ -1998,7 +1998,7 @@ static void skip_vanilla_credits(dw_rom *rom)
 {
     if (SKIP_VANILLA_CREDITS(rom)) {
         printf("Skipping original credits...\n");
-        add_hook(rom, JMP, 0x542b, COPY_SPELL_LEVELS);
+        add_hook(rom, JMP, 0x542b, START_DWR_CREDITS);
     }
 }
 
@@ -2010,25 +2010,14 @@ static void skip_vanilla_credits(dw_rom *rom)
 /**
  * Publishes the level at which each spell is learned, for the stats screen.
  *
- * Writes 10 bytes to spell_level_table in bank 3 (SPELL_LEVEL_TABLE), one per
- * spell in dw_spells order:
+ * Writes one byte per spell in dw_spells order to spell_level_table, at CPU
+ * $bf00 in expansion bank 4. Each is the lowest level whose stats entry has
+ * that spell's bit set, or 0 if it is never learnable in this seed. The bit
+ * layout matches randomize_spells(): spell j is bit (j + 8) % 16.
  *
- *     [0] HEAL   [1] HURT    [2] SLEEP     [3] RADIANT  [4] STOPSPELL
- *     [5] OUTSIDE[6] RETURN  [7] REPEL     [8] HEALMORE [9] HURTMORE
- *
- * Each value is the lowest player level whose stats entry has that spell's bit
- * set, or 0 if the spell is never learnable in this seed - Permanent Repel and
- * No Hurtmore set the level to 255 in randomize_spells(), so those bits never
- * appear in the table at all.
- *
- * The bit layout matches randomize_spells(): spell j occupies bit (j + 8) % 16
- * of the 16-bit mask, so HEAL through REPEL are bits 8-15 and HEALMORE and
- * HURTMORE are bits 0-1.
- *
- * The renderer needs this for more than display. A spell learned at level 1 is
- * granted at new-game init without a level-up, so record_spell_time never runs
- * for it and its timestamp stays zero - the same value as "never learned". The
- * level distinguishes the two.
+ * The renderer needs the level as well as the timestamp: a spell learned at
+ * level 1 is granted at new-game init without a level-up, so its timestamp
+ * stays zero, which is also what "never learned" looks like.
  *
  * @param rom The rom struct
  */
@@ -2046,7 +2035,9 @@ static void write_spell_levels(dw_rom *rom)
             }
         }
     }
-    patch(rom, SPELL_LEVEL_TABLE, sizeof(levels), levels);
+    /* $bf00 in bank 4 is expansion offset 0x7f00. Writing an expansion address
+     * directly is how credit_music.c places its music data. */
+    ppatch(&rom->expansion[0x7f00], sizeof(levels), levels);
 }
 
 void setup_expansion(dw_rom *rom)
@@ -2055,11 +2046,7 @@ void setup_expansion(dw_rom *rom)
 
     /* patching various routines to keep track of statistics */
     add_hook(rom, JSR, 0x31eb, INC_BONK_CTR);
-    /* Both credit entry points go through copy_spell_levels, which mirrors
-     * spell_level_table into SRAM and then falls through to start_dwr_credits.
-     * The stats screen renders from bank 4, where $c000 holds bank_7 rather than
-     * bank 3, so it cannot read the table directly - see copy_spell_levels. */
-    add_hook(rom, JMP, 0xccf0, COPY_SPELL_LEVELS);
+    add_hook(rom, JMP, 0xccf0, START_DWR_CREDITS);
     add_hook(rom, JSR, 0xdbb2, COUNT_SPELL_USE);
     add_hook(rom, JSR, 0xccb8, SNAPSHOT_TIMER);
     add_hook(rom, JSR, 0xe4ed, COUNT_ENCOUNTER);
@@ -2101,8 +2088,8 @@ void setup_expansion(dw_rom *rom)
     bank_3_patch(rom);
     fill_expansion(rom);
 
-    /* Must follow bank_3_patch(): that writes the whole bank-3 blob, including
-     * the zeroed placeholder this fills in. */
+    /* Must follow fill_expansion(): that writes the zeroed placeholder at
+     * expansion offset 0x7f00 that this fills in. */
     write_spell_levels(rom);
 
     int track = mt_rand(0, track_count - 1);

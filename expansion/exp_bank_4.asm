@@ -525,11 +525,6 @@ SPELL_TIME_GAP   EQU 3     ; end of the level (col 17) to the time column (20).
                            ; 20 is where render_item_row puts its time - an
                            ; 18-char name plus ITEM_TIME_GAP - so the two pages
                            ; line up.
-ROW_TAIL_WIDTH   EQU 2     ; cols 28-29: the last columns of the row, written as
-                           ; spaces so a row overwrites its full width in one
-                           ; pass. Both pages end their time at col 27.
-                           ; Spell row: 9 + 4 + 4 + 3 + 8 + 2 = 30.
-                           ; Item row:      18 + 2     + 8 + 2 = 30.
 
 spell_name_offset:         ; spell index -> byte offset into spell_names
     .db 0, 9, 18, 27, 36, 45, 54, 63, 72, 81
@@ -562,8 +557,8 @@ spell_order_lt:              ; CMP_SLOT_A, CMP_SLOT_B = spell indices.
                               ; insertion sort stays stable.
     ldx CMP_SLOT_A
     ldy CMP_SLOT_B
-    lda SPELL_LEVELS,x
-    cmp SPELL_LEVELS,y
+    lda spell_level_table,x
+    cmp spell_level_table,y
     bcc @lt
     bne @ge
     lda spell_alpha,x
@@ -593,8 +588,7 @@ render_spell_row:            ; A = spell index, PPU_POSITION at the row start.
     jsr print_spaces_x        ; cols 9-12, now at the level column
 
     ldx CUR_SLOT
-    lda SPELL_LEVELS,x        ; the SRAM mirror, not spell_level_table - bank 3
-                              ; is not mapped while the credits run
+    lda spell_level_table,x   ; in this bank, so directly readable
     sta BCD_INPUT
     lda #0
     sta BCD_INPUT+1
@@ -634,7 +628,7 @@ render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
     sta SORT_COUNT
 @build_loop:
     ldx CUR_SLOT
-    lda SPELL_LEVELS,x        ; SRAM mirror; see render_spell_row
+    lda spell_level_table,x
     beq @build_skip           ; never learnable in this seed
     cmp #1
     beq @build_add            ; starting spell - always show, at 0:00:00
@@ -1811,5 +1805,25 @@ exp_wait_for_nmi:
 
 .include famistudio_conf.asm
 .include famistudio_asm6.asm
+
+; *** Spell learn levels ***
+; Pinned at a fixed address so setup_expansion() can write it directly, the way
+; credit_music.c already writes &rom->expansion[0x4000]. CPU $bf00 in bank 4 is
+; expansion offset 0x7f00; the bank's code ends at $b84e, so this cannot collide
+; - and if it ever did, the assembler would say so.
+;
+; It lives here, rather than in bank 3 with the rest of the patch, because this
+; is the bank the renderer runs in. While the credits are up, $c000-$ffff holds
+; bank_7, not bank 3, so a bank-3 table would be unreadable from here. Keeping
+; the data with the code that reads it removes the problem instead of working
+; around it with an SRAM copy.
+.org $bf00
+spell_level_table:     ; spell index -> the level at which that spell is learned.
+                       ; Filled in by setup_expansion() from rom->stats, which is
+                       ; where the randomizer records which spells each level
+                       ; grants. 0 means the spell is never learnable in this
+                       ; seed - Permanent Repel and No Hurtmore set the level to
+                       ; 255, so those bits never appear in the stats table.
+    .db 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 .org $c000
