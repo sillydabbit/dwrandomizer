@@ -45,6 +45,7 @@ NMI_INIT_PPU       EQU %00010000
 NMI_SKIP_TILE      EQU #$f7
 
 INSTR_SPELL_TIMES  EQU $f2
+INSTR_SHOW_NUM5    EQU $f3
 INSTR_ITEM_TIMES   EQU $f5
 INSTR_PLAY_TIME    EQU $f6
 INSTR_MON_STAT     EQU $f7
@@ -361,6 +362,22 @@ handle_instruction:
     jsr print_bcd           ; print the last 4 digits of the BCD to the screen
     lda #2
     jsr add_stats_addr      ; Add 2 to the script pointer
+    rts
+
++next_instr:
+    cmp #INSTR_SHOW_NUM5
+    bne +next_instr
+    ldy #0                  ; same as INSTR_SHOW_NUMBER but 5 digits wide.
+    lda (STATS_ADDR),y      ; Kept as a separate opcode because widening the
+    sta TMP_ADDR            ; 4-digit one would push the monster and spell
+    iny                     ; pages past the 32-tile row.
+    lda (STATS_ADDR),y
+    sta TMP_ADDR + 1
+    jsr addr_to_bcd
+    ldx #5
+    jsr print_bcd_x         ; print all 5 BCD digits (max 65535)
+    lda #2
+    jsr add_stats_addr
     rts
 
 +next_instr:
@@ -1480,10 +1497,33 @@ stats_data:
     .word $663a ; Data address
 
     .db INSTR_SET_PPU
-    .word $2311 ; PPU address
-    .db "Play Time"
+    .word $22d1 ; PPU address
+    .db "Steps   "      ; 8 chars, not 9: the 5-digit field then ends in the
+    .db INSTR_SHOW_NUM5  ; same column as the 4-digit numbers above it
+    .word STEP_COUNT ; Data address
+
+    ; The level the run finished on, in the row the "Play Time" label used to
+    ; occupy. Padded to the 9-char label field every other stat on this page
+    ; uses, so INSTR_SHOW_NUMBER's 4-wide value lands in the identical column
+    ; (label 17-25, number 26-29) and no new opcode is needed. One word, like
+    ; Deaths and Steps above it - every figure on this page is an end-of-run
+    ; total, so "Level" can only mean the level the run ended on.
+    ; The time below is left unlabelled: it is the only time on the page, in an
+    ; unmistakable format, directly beneath the line it belongs to.
     .db INSTR_SET_PPU
-    .word $2353 ; PPU address
+    .word $2311 ; PPU address
+    .db "Level    "
+    .db INSTR_SHOW_NUMBER
+    .word WIN_LEVEL ; Data address
+    .db INSTR_SET_PPU
+    ; Centred in the OTHER STATS column rather than right-aligned with the
+    ; stat numbers above. The column's content runs cols 17-29 and the time
+    ; field is a fixed 11 wide - INSTR_PLAY_TIME always prints 2 digits for
+    ; each of hours, minutes, seconds and frames plus 3 separators - so col
+    ; 18 centres it and nothing about it varies with run length. Only the
+    ; leading hour digit changes: clear_bcd_zeros blanks it under 10 hours,
+    ; which fills one more cell on the left but never moves the field.
+    .word $2352 ; PPU address
     .db INSTR_PLAY_TIME
 
 

@@ -236,12 +236,17 @@ count_frame:
     inc $662e
 ++  jmp $fdf4
 
-snapshot_timer:
+snapshot_timer:        ; freezes the final stats for the ending screen
     ldx #2
 -   lda $662c,x
     sta $6f00,x
     dex
     bpl -
+    lda $c7            ; the level the game was won at, frozen at the same
+    sta WIN_LEVEL      ; moment as the play time above. Not read when the stats
+    lda #0             ; screen draws: by the time the credits start $c7 has
+    sta WIN_LEVEL+1    ; been clobbered and reads back as $ff. The high byte is
+                       ; cleared so INSTR_SHOW_NUMBER reads a clean 16-bit value.
     jmp do_dialog_hi
 
 modify_run_rate:
@@ -310,6 +315,20 @@ grant_erdricks_armor:  ; replaces the original 6-byte equip-write at $e2f6
     sta $be
     lda #$01            ; slot 1 = Erdrick's Armor
     jsr record_item_time_for_slot
+    rts
+
+; *** Step counter ***
+; Replaces the "lda $16 / cmp #$20" pair that begins each of the four
+; directional movement handlers (Right/Left/Down/Up Synced). The four call
+; sites are patched to "jsr step_counter" + nop, so this runs once per step,
+; then performs the original two instructions and returns. JSR/RTS do not
+; disturb flags, so the CMP result reaches the caller intact.
+step_counter:
+    inc STEP_COUNT
+    bne +
+    inc STEP_COUNT+1
++   lda $16             ; original code from the movement handler
+    cmp #$20
     rts
 
 item_slot_table:        ; item id ($0-$f) -> ITEM_TIMES slot, $ff = untracked.
