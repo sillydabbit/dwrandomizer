@@ -477,6 +477,9 @@ ITEM_ROW_WIDTH EQU 30      ; tiles blanked per row (cols 2-31), enough to
 ITEM_NAME_WIDTH EQU 18     ; the name field on an item row
 ITEM_TIME_GAP  EQU 2       ; blank tiles between the 18-char padded name and
                            ; the time, which render_hms prints 8 wide
+ITEM_TAIL_WIDTH EQU 2      ; cols 28-29, the columns after the time. Written as
+                           ; spaces so a row covers its whole width in one pass:
+                           ; 18 + 2 + 8 + 2 = ITEM_ROW_WIDTH.
 
 SLOT_OFFSET:               ; slot -> byte offset into ITEM_TIMES (slot * 3)
     .db 0, 3, 6, 9, 12, 15, 18, 21, 24, 27
@@ -550,8 +553,15 @@ print_name_x:                ; NAME_PTR set, X = field width; prints exactly
     rts
 
 blank_row:                   ; blanks ITEM_ROW_WIDTH tiles from PPU_POSITION,
-                              ; clearing the full width of one row
+                              ; clearing the full width of one row. Only needed
+                              ; for rows with nothing to show - a row that has
+                              ; content covers its own width.
     ldx #ITEM_ROW_WIDTH
+print_spaces_x:              ; writes X blank tiles at PPU_POSITION.
+                              ; Rows write their gaps rather than skipping them
+                              ; by advancing PPU_POSITION, so a row overwrites
+                              ; its full width in one pass. Blanking first is
+                              ; what made this page flicker.
 @loop:
     lda #$5f
     sta NEXT_TILE
@@ -594,8 +604,8 @@ slot_time_lt:                ; CMP_SLOT_A, CMP_SLOT_B = slot numbers.
     rts
 
 render_item_row:             ; A = slot number, PPU_POSITION at the row start.
-                              ; Draws the 18-char padded name, steps over the
-                              ; gap, then the timestamp.
+                              ; Draws the name, gap, timestamp and trailing
+                              ; columns - the whole ITEM_ROW_WIDTH.
     sta CUR_SLOT
     tax
     lda name_offset,x
@@ -607,13 +617,8 @@ render_item_row:             ; A = slot number, PPU_POSITION at the row start.
     sta NAME_PTR+1
     ldx #ITEM_NAME_WIDTH
     jsr print_name_x          ; PPU_POSITION now at row_start+18
-    lda PPU_POSITION
-    clc
-    adc #ITEM_TIME_GAP
-    sta PPU_POSITION
-    lda PPU_POSITION+1
-    adc #0
-    sta PPU_POSITION+1        ; PPU_POSITION now at the time column
+    ldx #ITEM_TIME_GAP
+    jsr print_spaces_x        ; cols 18-19, now at the time column
     ldx CUR_SLOT
     lda SLOT_OFFSET,x
     clc
@@ -622,14 +627,15 @@ render_item_row:             ; A = slot number, PPU_POSITION at the row start.
     lda #0
     adc #>ITEM_TIMES
     sta TMP_ADDR+1
-    jsr render_hms
+    jsr render_hms            ; cols 20-27
+    ldx #ITEM_TAIL_WIDTH
+    jsr print_spaces_x        ; cols 28-29 - the row is now fully overwritten
     rts
 
 render_item_times:            ; entry point for the INSTR_ITEM_TIMES opcode.
                               ; Builds the list of acquired slots, sorts it by
-                              ; timestamp, then draws ITEM_ROW_COUNT rows -
-                              ; blanking each one first so nothing shows
-                              ; through from the previous page.
+                              ; timestamp, then draws ITEM_ROW_COUNT full-width
+                              ; rows.
     ; --- build the unsorted list of acquired slots ---
     lda #0
     sta CUR_SLOT
@@ -705,17 +711,15 @@ render_item_times:            ; entry point for the INSTR_ITEM_TIMES opcode.
     sta PPU_POSITION
     lda ROW_START+1
     sta PPU_POSITION+1
-    jsr blank_row
-    lda ROW_START
-    sta PPU_POSITION
-    lda ROW_START+1
-    sta PPU_POSITION+1
     lda SORT_ROW
     cmp SORT_COUNT
-    bcs @row_next
+    bcs @row_blank            ; nothing for this row - clear it
     ldx SORT_ROW
     lda SORT_LIST,x
-    jsr render_item_row
+    jsr render_item_row       ; writes all 30 columns, so it overwrites in place
+    jmp @row_next
+@row_blank:
+    jsr blank_row
 @row_next:
     lda ROW_START
     clc
