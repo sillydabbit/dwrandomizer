@@ -321,6 +321,10 @@ handle_instruction:
     jsr bin_to_bcd
     ldx #2
     jsr print_bcd_x
+    rts                     ; without this the handler falls through into
+                            ; the remaining opcode comparisons, and only
+                            ; works because the accumulator happens to
+                            ; hold a PPU address high byte ($20-$23)
 
 +next_instr:
     cmp #INSTR_SHOW_NUMBER
@@ -935,7 +939,7 @@ calculate_play_time:
     sbc #1
     sta REMAINDER
     lda REMAINDER+1
-    sbc #1
+    sbc #0             ; borrow only - #1 here would subtract 257, not 1
     sta REMAINDER+1
     +
     ; divide by 6 to get centiseconds
