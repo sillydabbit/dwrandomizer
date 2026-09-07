@@ -1295,7 +1295,7 @@ calculate_play_time:     ; converts the 24-bit frame count at (TMP_ADDR) into
     sbc #1
     sta REMAINDER
     lda REMAINDER+1
-    sbc #1
+    sbc #0             ; borrow only - #1 here would subtract 257, not 1
     sta REMAINDER+1
     +
     ; divide by 6 to get centiseconds
