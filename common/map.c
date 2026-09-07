@@ -430,11 +430,20 @@ static dw_border_tile place(dw_map *map, dw_warp_index warp_idx, dw_tile tile,
     uint8_t x, y;
     dw_warp *warp;
     dw_tile old_tile;
+    int tries = 0;
 
     warp = &map->warps_from[warp_idx];
 
+    /* With RANDOM_MAP off, map_find_land() only ever offers the vanilla spots,
+     * and it does not check whether they are already taken. Once every vanilla
+     * spot on this land mass holds a town, castle or cave, it can only hand back
+     * occupied tiles and this loop never ends - map_find_land()'s own 200-try
+     * fallback cannot help, because `loop` is local and resets on every call.
+     * Escalating to ignore_vanilla lets it pick from the whole land mass, which
+     * is what the parameter is for. Normal placements succeed in a handful of
+     * tries and never reach the threshold, so seed output is unchanged. */
     do {
-        map_find_land(map, lm_one, lm_two, &x, &y, FALSE);
+        map_find_land(map, lm_one, lm_two, &x, &y, tries++ >= 100);
         old_tile = map->tiles[x][y];
     } while (old_tile == TILE_CASTLE || old_tile == TILE_TOWN ||
              old_tile == TILE_CAVE);
@@ -455,6 +464,7 @@ static dw_border_tile place(dw_map *map, dw_warp_index warp_idx, dw_tile tile,
  */
 static void place_charlock(dw_map *map, int largest, int next)
 {
+    int charlock_tries = 0;
 
     uint8_t x = 0, y = 0;
     int  i, j;
@@ -468,8 +478,10 @@ static void place_charlock(dw_map *map, int largest, int next)
     } else {
         warp = &map->warps_from[WARP_CHARLOCK];
 
+        /* Same hazard as place(): if no vanilla spot on this land mass sits
+         * inside the margin, this spins forever. Escalate for the same reason. */
         while(x < 7 || x > 118 || y < 3 || y > 116) {
-            map_find_land(map, largest, next, &x, &y, FALSE);
+            map_find_land(map, largest, next, &x, &y, charlock_tries++ >= 100);
         }
         warp->x = x-3;
         warp->y = y;
