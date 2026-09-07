@@ -10,6 +10,21 @@ SPELL_TIMES   EQU $6790 ; spell learn timestamps: 10 slots, 3 bytes each.
                         ; upstream dev-3.1's experimental autosave claims $6780,
                         ; which would land inside that block. Both ranges sit
                         ; inside what init_save_ram already clears.
+SPELL_LEVELS  EQU $67ae ; spell learn levels, 10 bytes, mirrored out of bank 3
+                        ; by copy_spell_levels on the way into the credits.
+                        ; The renderer runs in bank 4, where $c000 holds bank_7,
+                        ; not bank 3 - so it cannot read spell_level_table
+                        ; directly. SRAM is mapped no matter which PRG bank is.
+                        ; Sits just past SPELL_TIMES ($6790..$67ad) and still
+                        ; inside the range init_save_ram clears.
+SPELL_STAMP   EQU $67b8 ; frame counter captured at the moment of a level-up,
+                        ; 3 bytes LE. Every spell learned from that level-up is
+                        ; timestamped from this rather than sampling $662c
+                        ; itself, so spells gained together share one time and
+                        ; the page reads in order when sorted by level. Sampling
+                        ; per spell did not: the level-up display shows one
+                        ; spell at a time and waits for the player between them,
+                        ; so the stamps recorded message order, not level order.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks

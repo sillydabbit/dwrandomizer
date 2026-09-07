@@ -484,9 +484,12 @@ ITEM_ROW_WIDTH EQU 30      ; tiles blanked per row (cols 2-31), enough to
 ITEM_NAME_WIDTH EQU 18     ; the name field on an item row
 ITEM_TIME_GAP  EQU 2       ; blank tiles between the 18-char padded name and
                            ; the time, which render_hms prints 8 wide
-ITEM_TAIL_WIDTH EQU 2      ; cols 28-29, the columns after the time. Written as
-                           ; spaces so a row covers its whole width in one pass:
-                           ; 18 + 2 + 8 + 2 = ITEM_ROW_WIDTH.
+ROW_TAIL_WIDTH EQU 2       ; cols 28-29, the columns after the time. Written as
+                           ; spaces so a row covers its whole width in one pass
+                           ; rather than being blanked first. Both pages end
+                           ; their time at col 27:
+                           ;   item row:      18 + 2     + 8 + 2 = ITEM_ROW_WIDTH
+                           ;   spell row: 9 + 4 + 4 + 3 + 8 + 2 = ITEM_ROW_WIDTH
 
 SLOT_OFFSET:               ; slot -> byte offset into ITEM_TIMES (slot * 3)
     .db 0, 3, 6, 9, 12, 15, 18, 21, 24, 27
@@ -514,11 +517,28 @@ item_names:
 ; Names are the classic ones even when Modern Spell Names is on, matching the
 ; existing SPELL USAGE page, which hardcodes them in its script.
 SPELL_NAME_WIDTH EQU 9     ; STOPSPELL is the longest spell name
-SPELL_LEVEL_GAP  EQU 9     ; end of the name (col 9) to the level (col 18)
-SPELL_TIME_GAP   EQU 2     ; end of the level (col 20) to the time (col 22)
+SPELL_LEVEL_GAP  EQU 4     ; name (cols 0-8) to the level field at col 13
+SPELL_LEVEL_WIDTH EQU 4    ; cols 13-16, right-aligned, matching print_bcd's
+                           ; width on the SPELL USAGE page. Its right edge lines
+                           ; up with the "LEVEL" header, which ends at col 16.
+SPELL_TIME_GAP   EQU 3     ; end of the level (col 17) to the time column (20).
+                           ; 20 is where render_item_row puts its time - an
+                           ; 18-char name plus ITEM_TIME_GAP - so the two pages
+                           ; line up.
+ROW_TAIL_WIDTH   EQU 2     ; cols 28-29: the last columns of the row, written as
+                           ; spaces so a row overwrites its full width in one
+                           ; pass. Both pages end their time at col 27.
+                           ; Spell row: 9 + 4 + 4 + 3 + 8 + 2 = 30.
+                           ; Item row:      18 + 2     + 8 + 2 = 30.
 
 spell_name_offset:         ; spell index -> byte offset into spell_names
     .db 0, 9, 18, 27, 36, 45, 54, 63, 72, 81
+
+spell_alpha:               ; spell index -> its position in alphabetical order.
+                           ; Only used to break ties when two spells are learned
+                           ; at the same level: HEAL, HEALMORE, HURT, HURTMORE,
+                           ; OUTSIDE, RADIANT, REPEL, RETURN, SLEEP, STOPSPELL.
+    .db 0, 2, 8, 5, 9, 4, 7, 6, 1, 3
 
 spell_names:               ; dw_spells order, space padded to SPELL_NAME_WIDTH
     .db "HEAL     "
@@ -532,32 +552,22 @@ spell_names:               ; dw_spells order, space padded to SPELL_NAME_WIDTH
     .db "HEALMORE "
     .db "HURTMORE "
 
-spell_time_lt:               ; CMP_SLOT_A, CMP_SLOT_B = spell indices.
-                              ; Returns A=1 if time[A] < time[B], else A=0.
-                              ; Same 24-bit compare as slot_time_lt, against
-                              ; SPELL_TIMES; equal values return 0 so the
-                              ; insertion sort stays stable and starting spells
-                              ; (all timestamp 0) keep dw_spells order.
-    lda CMP_SLOT_A
-    tax
-    lda SLOT_OFFSET,x
-    sta OFF_A
-    lda CMP_SLOT_B
-    tax
-    lda SLOT_OFFSET,x
-    sta OFF_B
-    ldx OFF_A
-    ldy OFF_B
-    lda SPELL_TIMES+2,x
-    cmp SPELL_TIMES+2,y
+spell_order_lt:              ; CMP_SLOT_A, CMP_SLOT_B = spell indices.
+                              ; Returns A=1 if A sorts before B, else A=0.
+                              ; Ordered by learn level, not timestamp: a multi-
+                              ; level jump stamps every spell it grants in
+                              ; dw_spells bit order, not level order, so the
+                              ; timestamps tie or invert. Ties break
+                              ; alphabetically; equal keys return 0, so the
+                              ; insertion sort stays stable.
+    ldx CMP_SLOT_A
+    ldy CMP_SLOT_B
+    lda SPELL_LEVELS,x
+    cmp SPELL_LEVELS,y
     bcc @lt
     bne @ge
-    lda SPELL_TIMES+1,x
-    cmp SPELL_TIMES+1,y
-    bcc @lt
-    bne @ge
-    lda SPELL_TIMES+0,x
-    cmp SPELL_TIMES+0,y
+    lda spell_alpha,x
+    cmp spell_alpha,y
     bcc @lt
 @ge:
     lda #0
@@ -579,33 +589,24 @@ render_spell_row:            ; A = spell index, PPU_POSITION at the row start.
     ldx #SPELL_NAME_WIDTH
     jsr print_name_x          ; PPU_POSITION now at col 9
 
-    lda PPU_POSITION
-    clc
-    adc #SPELL_LEVEL_GAP
-    sta PPU_POSITION
-    lda PPU_POSITION+1
-    adc #0
-    sta PPU_POSITION+1        ; now at the level column
+    ldx #SPELL_LEVEL_GAP
+    jsr print_spaces_x        ; cols 9-12, now at the level column
 
     ldx CUR_SLOT
-    lda spell_level_table,x   ; lives in bank 3; the whole project assembles as
-                              ; one pass, so the label resolves directly
+    lda SPELL_LEVELS,x        ; the SRAM mirror, not spell_level_table - bank 3
+                              ; is not mapped while the credits run
     sta BCD_INPUT
     lda #0
     sta BCD_INPUT+1
-    jsr bin_to_bcd            ; deliberately no clear_bcd_zeros: keeping the
-                              ; leading zero right-aligns the column, so level 3
-                              ; prints "03" and lines up under level 16
-    ldx #2
-    jsr print_bcd_x           ; PPU_POSITION now at col 20
+    jsr bin_to_bcd
+    jsr clear_bcd_zeros       ; blank the leading zeros so the number right-
+                              ; aligns in its field, the way addr_to_bcd does
+                              ; for the SPELL USAGE counts
+    ldx #SPELL_LEVEL_WIDTH
+    jsr print_bcd_x           ; PPU_POSITION now at col 17
 
-    lda PPU_POSITION
-    clc
-    adc #SPELL_TIME_GAP
-    sta PPU_POSITION
-    lda PPU_POSITION+1
-    adc #0
-    sta PPU_POSITION+1        ; now at the time column
+    ldx #SPELL_TIME_GAP
+    jsr print_spaces_x        ; cols 17-19, now at the time column
 
     ldx CUR_SLOT
     lda SLOT_OFFSET,x
@@ -615,7 +616,9 @@ render_spell_row:            ; A = spell index, PPU_POSITION at the row start.
     lda #0
     adc #>SPELL_TIMES
     sta TMP_ADDR+1
-    jsr render_hms
+    jsr render_hms            ; cols 20-27
+    ldx #ROW_TAIL_WIDTH
+    jsr print_spaces_x        ; cols 28-29 - the row is now fully overwritten
     rts
 
 render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
@@ -631,7 +634,7 @@ render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
     sta SORT_COUNT
 @build_loop:
     ldx CUR_SLOT
-    lda spell_level_table,x
+    lda SPELL_LEVELS,x        ; SRAM mirror; see render_spell_row
     beq @build_skip           ; never learnable in this seed
     cmp #1
     beq @build_add            ; starting spell - always show, at 0:00:00
@@ -674,7 +677,7 @@ render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
     dex
     lda SORT_LIST,x
     sta CMP_SLOT_B
-    jsr spell_time_lt
+    jsr spell_order_lt
     cmp #0
     beq @sort_inner_done
     ldx J_IDX
@@ -705,17 +708,15 @@ render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
     sta PPU_POSITION
     lda ROW_START+1
     sta PPU_POSITION+1
-    jsr blank_row
-    lda ROW_START
-    sta PPU_POSITION
-    lda ROW_START+1
-    sta PPU_POSITION+1
     lda SORT_ROW
     cmp SORT_COUNT
-    bcs @row_next
+    bcs @row_blank            ; nothing for this row - clear it
     ldx SORT_ROW
     lda SORT_LIST,x
-    jsr render_spell_row
+    jsr render_spell_row                    ; writes all 30 columns, so it overwrites in place
+    jmp @row_next
+@row_blank:
+    jsr blank_row
 @row_next:
     lda ROW_START
     clc
@@ -868,7 +869,7 @@ render_item_row:             ; A = slot number, PPU_POSITION at the row start.
     adc #>ITEM_TIMES
     sta TMP_ADDR+1
     jsr render_hms            ; cols 20-27
-    ldx #ITEM_TAIL_WIDTH
+    ldx #ROW_TAIL_WIDTH
     jsr print_spaces_x        ; cols 28-29 - the row is now fully overwritten
     rts
 
@@ -1317,19 +1318,6 @@ stats_data:
 
     .db INSTR_WAIT, 240
 
-    ; Spell acquisition page. Ordered before the item page so the run reads
-    ; chronologically and Play Time still lands last, on SPELL USAGE. Header is
-    ; uppercase and padded to 30 chars for the same reasons as the item page:
-    ; the header subpalette renders mixed case unreadably, and a short string
-    ; would leave the previous header's tail on screen.
-    .db INSTR_SET_PPU
-    .word $20c2 ; PPU address
-    .db "SPELL ACQUIRED LEVEL  TIME    "
-
-    .db INSTR_SPELL_TIMES
-
-    .db INSTR_WAIT, 240
-
     ; Item discovery timestamps page
     ; Header is uppercase to match every other header row on this screen -
     ; the header rows use a subpalette in which the font's main colour is
@@ -1343,9 +1331,22 @@ stats_data:
 
     .db INSTR_ITEM_TIMES
 
-    ; Play Time is omitted here: row 26 is needed for the 10th item, and it
-    ; still lands last on the SPELL USAGE page that follows. The renderer
-    ; overwrites every row it uses, so no clear is needed.
+    ; Play Time is omitted here: row 26 is needed for the 10th item, and the
+    ; page still lands last on SPELL USAGE. The renderer overwrites every row
+    ; it uses, so no clear is needed.
+
+    .db INSTR_WAIT, 240
+
+    ; Spell acquisition page. Ordered after the item page: the key items are the
+    ; headline of a run, so they lead, and Play Time still lands last on SPELL
+    ; USAGE. Header is uppercase and padded to 30 chars for the same reasons as
+    ; the item page: the header subpalette renders mixed case unreadably, and a
+    ; short string would leave the previous header's tail on screen.
+    .db INSTR_SET_PPU
+    .word $20c2 ; PPU address
+    .db "SPELL       LEVEL     TIME    "
+
+    .db INSTR_SPELL_TIMES
 
     .db INSTR_WAIT, 240
 

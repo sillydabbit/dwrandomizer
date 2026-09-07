@@ -346,11 +346,11 @@ record_spell_time:     ; A = spell index + 16, exactly as b3_dbf0 expects it
     ora SPELL_TIMES+1,x
     ora SPELL_TIMES+2,x
     bne +              ; already recorded - keep the first time, not the last
-    lda $662c
+    lda SPELL_STAMP    ; the level-up's time, not the time this message showed
     sta SPELL_TIMES,x
-    lda $662d
+    lda SPELL_STAMP+1
     sta SPELL_TIMES+1,x
-    lda $662e
+    lda SPELL_STAMP+2
     sta SPELL_TIMES+2,x
 +   pla
     jmp b3_dbf0        ; tail-call the routine whose JSR we replaced
@@ -362,6 +362,38 @@ spell_level_table:     ; spell index -> the level at which that spell is learned
                        ; seed - Permanent Repel and No Hurtmore set the level to
                        ; 255, so those bits never appear in the stats table.
     .db 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+snapshot_spell_time:   ; Captures the frame counter at the instant of a level-up.
+                       ; save_spells (written by show_spells_learned at $bfe0)
+                       ; stashes the old spell mask and then jumps to $f050 to
+                       ; apply the new level's stats; that jump is retargeted
+                       ; here, so this runs once per level-up, before any spell
+                       ; message is shown. Ends by continuing to $f050.
+    lda $662c
+    sta SPELL_STAMP
+    lda $662d
+    sta SPELL_STAMP+1
+    lda $662e
+    sta SPELL_STAMP+2
+    jmp $f050          ; carry on with the level-up the hook interrupted
+
+copy_spell_levels:     ; Mirrors spell_level_table into SRAM, then falls through
+                       ; to the credits. Both credit entry points are retargeted
+                       ; here by dwr.c.
+                       ;
+                       ; This exists because bank 3 is NOT reachable from the
+                       ; stats screen. The renderer lives in bank 4, and while
+                       ; the credits run $c000-$ffff holds bank_7 (see the
+                       ; include order in credits.asm) - so a bank-4 "lda
+                       ; spell_level_table,x" reads bank 7 filler, not the table.
+                       ; This routine still runs with bank 3 mapped, and SRAM is
+                       ; mapped whatever the PRG bank, so the copy bridges them.
+    ldx #9
+-   lda spell_level_table,x
+    sta SPELL_LEVELS,x
+    dex
+    bpl -
+    jmp start_dwr_credits
 
 .org $c4f5
 

@@ -1998,7 +1998,7 @@ static void skip_vanilla_credits(dw_rom *rom)
 {
     if (SKIP_VANILLA_CREDITS(rom)) {
         printf("Skipping original credits...\n");
-        add_hook(rom, JMP, 0x542b, START_DWR_CREDITS);
+        add_hook(rom, JMP, 0x542b, COPY_SPELL_LEVELS);
     }
 }
 
@@ -2055,7 +2055,11 @@ void setup_expansion(dw_rom *rom)
 
     /* patching various routines to keep track of statistics */
     add_hook(rom, JSR, 0x31eb, INC_BONK_CTR);
-    add_hook(rom, JMP, 0xccf0, START_DWR_CREDITS);
+    /* Both credit entry points go through copy_spell_levels, which mirrors
+     * spell_level_table into SRAM and then falls through to start_dwr_credits.
+     * The stats screen renders from bank 4, where $c000 holds bank_7 rather than
+     * bank 3, so it cannot read the table directly - see copy_spell_levels. */
+    add_hook(rom, JMP, 0xccf0, COPY_SPELL_LEVELS);
     add_hook(rom, JSR, 0xdbb2, COUNT_SPELL_USE);
     add_hook(rom, JSR, 0xccb8, SNAPSHOT_TIMER);
     add_hook(rom, JSR, 0xe4ed, COUNT_ENCOUNTER);
@@ -2092,6 +2096,7 @@ void setup_expansion(dw_rom *rom)
      * that records the time and then tail-calls $dbf0 needs no NOP padding and
      * shifts no addresses. */
     add_hook(rom, JSR, 0xeaf3, RECORD_SPELL_TIME);
+
 
     bank_3_patch(rom);
     fill_expansion(rom);
@@ -2184,6 +2189,13 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     memset(&rom.content[0xf232], 0xff, 0xf35b - 0xf232);
 
     show_spells_learned(&rom);
+    /* Must follow show_spells_learned(): that writes save_spells at 0x3fe0,
+     * including the "jmp $f050" this retargets, and would overwrite the hook
+     * if it ran afterwards. snapshot_spell_time records the frame counter once
+     * per level-up and then continues to $f050, so every spell gained from one
+     * level-up shares a timestamp - sampling the clock per spell recorded the
+     * order the messages were shown in, not the order the levels were gained. */
+    add_hook(&rom, JMP, 0x3fe8, SNAPSHOT_SPELL_TIME);
     other_patches(&rom);
     short_charlock(&rom);
     do_chest_flags(&rom);
