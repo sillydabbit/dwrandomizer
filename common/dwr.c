@@ -1150,6 +1150,42 @@ static void permanent_torch(dw_rom *rom)
 }
 
 /**
+ * Makes Erdrick's Cave visible without a torch, leaving every other map alone.
+ *
+ * Permanent Torch is a superset of this, so it wins when both are set.
+ *
+ * @param rom The rom struct
+ */
+static void tablet_cave_torch(dw_rom *rom)
+{
+    if (!TABLET_CAVE_TORCH(rom) || PERMANENT_TORCH(rom))
+        return;
+
+    printf("Lighting Erdrick's Cave...\n");
+
+    /* Permanent Torch cannot just be narrowed to one map: it does not light
+     * caves directly. The map-load block sets the radius only for maps < 15,
+     * so a cave inherits whatever the overworld left. Replace the whole block
+     * with a map-aware call - 13 bytes out, 3 in, 10 padded. */
+    add_hook(rom, JSR, 0x2f12, TABLET_TORCH_RADIUS);
+    nop(rom, 0x2f15, 10);
+
+    /* The radius decays unless this compare says otherwise. Radiant grows the
+     * radius to 7 and then fades it by 2 at a time, passing through 3 on the
+     * way down, so leaving this half ungated would quietly stop it at 3 and
+     * make Radiant permanent everywhere - 4 bytes out, 3 in, 1 padded. */
+    add_hook(rom, JSR, 0xca5e, TABLET_TORCH_HOLD);
+    nop(rom, 0xca61, 1);
+
+    /* Tablet Cave takes its own light back when the player leaves, but the
+     * Torch item produces identical state. Using it hands the light to the
+     * player so it survives the way a vanilla torch does - 4 bytes out, 3 in,
+     * 1 padded. */
+    add_hook(rom, JSR, 0xdd34, TABLET_TORCH_USED);
+    nop(rom, 0xdd37, 1);
+}
+
+/**
  * Discounts all weapon and armor prices..
  *
  * @param rom The rom struct
@@ -2147,6 +2183,7 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     torch_in_battle(&rom);
     repel_mods(&rom);
     permanent_torch(&rom);
+    tablet_cave_torch(&rom);
     rotate_dungeons(&rom);
     treasure_guards(&rom);
     sorted_inventory(&rom);

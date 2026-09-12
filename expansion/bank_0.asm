@@ -4,6 +4,9 @@ FILLVALUE $ff
 CURRENT_TILE  EQU $E0
 SELECTED_ITEM EQU $D7
 ITEMS         EQU $C1
+TABLET_LIT    EQU $6807 ; nonzero while light supplied by Tablet Cave is in
+                        ; effect - see tablet_torch_radius. The stats work
+                        ; uses SRAM up to $6806.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks

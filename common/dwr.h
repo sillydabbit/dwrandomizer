@@ -83,7 +83,7 @@
 #define CUSTOM_SPELLS(x)          (x->flags[14] & 0x08)
 #define SKIP_VANILLA_CREDITS(x)   (x->flags[14] & 0x04)
 
-#define UNUSED_230                (x->flags[ 2] & 0x30)
+#define TABLET_CAVE_TORCH(x)      (x->flags[ 2] & 0x30)
 #define UNUSED_203                (x->flags[ 2] & 0x03)
 #define UNUSED_603                (x->flags[ 6] & 0x03)
 #define UNUSED_830                (x->flags[ 8] & 0x30)
