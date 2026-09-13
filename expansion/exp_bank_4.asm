@@ -1347,6 +1347,7 @@ stats_data:
     ; it uses, so no clear is needed.
 
     .db INSTR_WAIT, 240
+    .db INSTR_WAIT, 120 ; 6s total - INSTR_WAIT takes a single byte of frames
 
     ; Spell acquisition page. Ordered after the item page: the key items are the
     ; headline of a run, so they lead, and Play Time still lands last on SPELL
@@ -1360,6 +1361,7 @@ stats_data:
     .db INSTR_SPELL_TIMES
 
     .db INSTR_WAIT, 240
+    .db INSTR_WAIT, 120 ; 6s total - INSTR_WAIT takes a single byte of frames
 
     .db INSTR_SET_PPU
     .word $20c2
