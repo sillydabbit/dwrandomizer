@@ -1,16 +1,25 @@
 
 .org $c288
 
-.word exp_start_dwr_credits    ;  0
-.word exp_inc_counter          ;  2
-.word exp_inc_enemy_death_ctr  ;  4
-.word exp_count_win            ;  6
-.word exp_count_encounter      ;  8
-.word exp_inc_mon_counter      ; 10
-.word exp_count_spell_use      ; 12
-.word exp_load_last_bank       ; 14
-.word exp_sort_inventory       ; 16
-; .word exp_torch_in_battle      ; 18
+; $c288 held the dispatch table. It has moved to the end of this bank
+; (exp_dispatch) because it is the one thing here that grows: every entry added
+; to it pushes all 25 routines below it down, and those addresses are the hook
+; targets the C side patches in. It is read by label now, so it can grow
+; without moving anything.
+;
+; The 18 bytes it left behind are free for stubs that want to be reachable by a
+; short branch from exec_expansion_sub. @stubs_end guards the boundary, because
+; a backwards .org overwrites silently rather than failing.
+
+@stubs_end:
+.if @stubs_end > $c29a
+    .error "the $c288 stubs have overrun the 18 bytes the dispatch table left"
+.endif
+
+.org $c29a              ; first byte past the old table. Everything from here
+                        ; down sits at its original address, which is the point
+                        ; of the whole arrangement - the .error above is what
+                        ; keeps it true.
 
 start_dwr_credits:
     ldy #0
@@ -77,9 +86,9 @@ exec_expansion_sub:
     pha
 ;     lda #$4c
 ;     sta $7f00
-    lda $c288,y
+    lda exp_dispatch,y
     sta $7f01
-    lda $c289,y
+    lda exp_dispatch+1,y
     sta $7f02
     lda $6004
     sta $7004
@@ -242,12 +251,10 @@ snapshot_timer:        ; freezes the final stats for the ending screen
     sta $6f00,x
     dex
     bpl -
-    lda $c7            ; the level the game was won at, frozen at the same
-    sta WIN_LEVEL      ; moment as the play time above. Not read when the stats
-    lda #0             ; screen draws: by the time the credits start $c7 has
-    sta WIN_LEVEL+1    ; been clobbered and reads back as $ff. The high byte is
-                       ; cleared so INSTR_SHOW_NUMBER reads a clean 16-bit value.
-    jmp do_dialog_hi
+    jmp capture_win_level ; was "jmp do_dialog_hi", which that tail-calls in
+                        ; turn. Appended rather than inlined here: this routine
+                        ; sits above modify_run_rate, so growing it would move
+                        ; modify_run_rate down the bank.
 
 modify_run_rate:
     and #$7f       ; limit the value in reg A to 0-127
@@ -387,6 +394,37 @@ snapshot_spell_time:   ; Captures the frame counter at the instant of a level-up
     lda $662e
     sta SPELL_STAMP+2
     jmp $f050          ; carry on with the level-up the hook interrupted
+
+; *** Ending stats, tail ends ***
+
+capture_win_level:      ; tail of snapshot_timer. $c7 is the level the game was
+                        ; won at, frozen at the same moment as the play time.
+                        ; Not read when the stats screen draws: by the time the
+                        ; credits start $c7 has been clobbered and reads back as
+                        ; $ff. The high byte is cleared so INSTR_SHOW_NUMBER
+                        ; reads a clean 16-bit value.
+    lda $c7
+    sta WIN_LEVEL
+    lda #0
+    sta WIN_LEVEL+1
+    jmp do_dialog_hi
+
+; *** Expansion dispatch table ***
+; Indexed by the Y that each stub loads, and read by exec_expansion_sub above.
+; It lives here, at the end, rather than at $c288 where it started: it is the
+; only part of this bank that grows, and down here it can.
+
+exp_dispatch:
+.word exp_start_dwr_credits    ;  0
+.word exp_inc_counter          ;  2
+.word exp_inc_enemy_death_ctr  ;  4
+.word exp_count_win            ;  6
+.word exp_count_encounter      ;  8
+.word exp_inc_mon_counter      ; 10
+.word exp_count_spell_use      ; 12
+.word exp_load_last_bank       ; 14
+.word exp_sort_inventory       ; 16
+; .word exp_torch_in_battle      ; 18
 
 .org $c4f5
 
