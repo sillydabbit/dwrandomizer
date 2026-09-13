@@ -25,6 +25,9 @@ WIN_LEVEL     EQU $67bb ; the player's level when the game was won, 16-bit LE.
                         ; like every other OTHER STATS figure. Frozen by
                         ; snapshot_timer; inside what init_save_ram clears.
 STEP_COUNT    EQU $6804 ; step counter, 16-bit LE
+ITEM_ADD_ID   EQU $6806 ; the item id being added, captured by stash_and_add
+                        ; before b3_e01b destroys it. Transient - written and
+                        ; read back within a single call, never persisted.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks
