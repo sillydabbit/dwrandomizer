@@ -112,11 +112,17 @@ count_spell_use:
     jmp $c6f0   ; show window
 
 sort_inventory:
+    pha         ; save the item id. b3_e01b shifts $3e left 4 bits when the
+                ; item lands in the high nibble of a slot, so the id cannot
+                ; be recovered from $3e after the call.
     jsr b3_e01b ; add the new item
     cpx #$04
-    bne + 
+    bne +
+    pla         ; inventory was full and the item was discarded
     rts
-+   ldy #16
++   pla         ; item id back in A
+    jsr record_item_time ; item discovery timestamps
+    ldy #16
     bne exec_expansion_sub
 
 torch_in_battle:
@@ -246,6 +252,122 @@ modify_run_rate:
     and #$3f       ; limit to 0-63
     adc $3e        ; add to the previous number
     jmp $eec7
+
+; *** Item discovery timestamps ***
+; Stamps the 24-bit frame counter at $662c - the one the ending's Play Time
+; comes from - the first time each tracked item is acquired. Write-once, so
+; trade-ins, discards and equipment swaps never disturb a recorded time.
+;
+; Storage is 10 slots of 3 bytes at ITEM_TIMES ($6760, in bank_0.asm), inside
+; the range init_save_ram clears, so 0 safely means "never acquired" - the
+; timer only runs once the player is on a map, so nothing lands on frame 0.
+;
+; The monster tallies below reach $675f, leaving exactly one byte of slack:
+; another monster or stat column would overrun into slot 0.
+
+record_item_time:      ; A = item id, captured by the caller BEFORE the add
+                        ; (see sort_inventory); called only after a
+                        ; successful inventory add
+    and #$0f            ; item ids are 4 bits; keeps the index inside the
+                        ; 16-byte table no matter what the caller passed
+    tax
+    lda item_slot_table,x
+    cmp #$ff
+    beq +
+    jsr record_item_time_for_slot
++   rts
+
+record_item_time_for_slot: ; A = slot index (0..ITEM_ROW_COUNT-1).
+                            ; Writes only if the slot is still zero.
+    sta $3c
+    asl a
+    clc
+    adc $3c
+    tax                 ; X = byte offset into ITEM_TIMES (slot*3)
+    lda ITEM_TIMES,x
+    ora ITEM_TIMES+1,x
+    ora ITEM_TIMES+2,x
+    bne +               ; already recorded, leave it alone
+    lda $662c
+    sta ITEM_TIMES,x
+    lda $662d
+    sta ITEM_TIMES+1,x
+    lda $662e
+    sta ITEM_TIMES+2,x
++   rts
+
+grant_erdricks_sword:  ; replaces the original 6-byte equip-write at $e2a6
+    lda $be
+    ora #$e0
+    sta $be
+    lda #$00            ; slot 0 = Erdrick's Sword
+    jsr record_item_time_for_slot
+    rts
+
+grant_erdricks_armor:  ; replaces the original 6-byte equip-write at $e2f6
+    lda $be
+    ora #$1c
+    sta $be
+    lda #$01            ; slot 1 = Erdrick's Armor
+    jsr record_item_time_for_slot
+    rts
+
+item_slot_table:        ; item id ($0-$f) -> ITEM_TIMES slot, $ff = untracked.
+                        ; Ids are from notes/items.txt. Indexed after an
+                        ; AND #$0f so it can never be read past its end.
+                        ; Slots 0 and 1 are absent here on purpose: the two
+                        ; Erdrick equipment pieces have no item id.
+    .db $ff, $ff, $ff, $ff, $ff, $06, $09, $04
+    .db $ff, $ff, $02, $05, $03, $07, $08, $ff
+
+; *** Spell learn timestamps ***
+; Records when each spell was learned, using the same 24-bit frame counter at
+; $662c as the item timestamps. Storage is 10 slots of 3 bytes at SPELL_TIMES,
+; inside the range init_save_ram clears, so 0 means "no timestamp".
+;
+; The hook replaces the "jsr $dbf0" in the level-up display loop that
+; show_spells_learned() writes at $eae6. That loop already walks newly learned
+; spells one at a time and is guarded against ones the player had, and a 3-byte
+; JSR for a 3-byte JSR shifts nothing.
+;
+; A spell learned at level 1 is granted at new-game init without a level-up, so
+; its slot stays zero. spell_level_table tells that apart from "not learned".
+
+record_spell_time:     ; A = spell index + 16, exactly as b3_dbf0 expects it
+    pha                ; b3_dbf0 needs A intact - it is the name table index
+    sec
+    sbc #16            ; A = spell index 0..9, in dw_spells order
+    sta $3c            ; b3_dbf0 clobbers $3c itself, so it is free scratch here
+    asl a
+    clc
+    adc $3c
+    tax                ; X = byte offset into SPELL_TIMES (index * 3)
+    lda SPELL_TIMES,x
+    ora SPELL_TIMES+1,x
+    ora SPELL_TIMES+2,x
+    bne +              ; already recorded - keep the first time, not the last
+    lda SPELL_STAMP    ; the level-up's time, not the time this message showed
+    sta SPELL_TIMES,x
+    lda SPELL_STAMP+1
+    sta SPELL_TIMES+1,x
+    lda SPELL_STAMP+2
+    sta SPELL_TIMES+2,x
++   pla
+    jmp b3_dbf0        ; tail-call the routine whose JSR we replaced
+
+snapshot_spell_time:   ; Captures the frame counter at the instant of a level-up.
+                       ; save_spells (written by show_spells_learned at $bfe0)
+                       ; stashes the old spell mask and then jumps to $f050 to
+                       ; apply the new level's stats; that jump is retargeted
+                       ; here, so this runs once per level-up, before any spell
+                       ; message is shown. Ends by continuing to $f050.
+    lda $662c
+    sta SPELL_STAMP
+    lda $662d
+    sta SPELL_STAMP+1
+    lda $662e
+    sta SPELL_STAMP+2
+    jmp $f050          ; carry on with the level-up the hook interrupted
 
 .org $c4f5
 
