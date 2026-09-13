@@ -214,4 +214,44 @@ exp_grant_erdricks_armor:  ; dispatch entry 20
     jsr exp_record_item_time_for_slot
     jmp exp_load_last_bank
 
+; *** Spell learn timestamps ***
+; Records when each spell was learned, from the frame counter captured at the
+; level-up itself rather than the moment its message is drawn - several spells
+; can arrive from one level-up and they should all share that instant.
+;
+; Storage is 10 slots of 3 bytes at SPELL_TIMES, inside the range
+; init_save_ram clears, so 0 means "not learned yet".
+
+exp_record_spell_time:  ; dispatch entry 22. A = spell index + 16.
+                        ; A is not handed back - the caller's stub keeps its own
+                        ; copy, because the bank restore clobbers the register.
+    sec
+    sbc #16             ; A = spell index 0..9, in dw_spells order
+    sta $3c             ; b3_dbf0 clobbers $3c itself, so it is free scratch here
+    asl a
+    clc
+    adc $3c
+    tax                 ; X = byte offset into SPELL_TIMES (index * 3)
+    lda SPELL_TIMES,x
+    ora SPELL_TIMES+1,x
+    ora SPELL_TIMES+2,x
+    bne +               ; already recorded - keep the first time, not the last
+    lda SPELL_STAMP     ; the level-up's time, not the time this message showed
+    sta SPELL_TIMES,x
+    lda SPELL_STAMP+1
+    sta SPELL_TIMES+1,x
+    lda SPELL_STAMP+2
+    sta SPELL_TIMES+2,x
++   jmp exp_load_last_bank
+
+exp_snapshot_spell_time: ; dispatch entry 24. Captures the frame counter at the
+                        ; instant of a level-up, before any spell message shows.
+    lda $662c
+    sta SPELL_STAMP
+    lda $662d
+    sta SPELL_STAMP+1
+    lda $662e
+    sta SPELL_STAMP+2
+    jmp exp_load_last_bank
+
 .org $c000

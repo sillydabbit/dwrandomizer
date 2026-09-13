@@ -297,53 +297,26 @@ step_counter:
     rts
 
 ; *** Spell learn timestamps ***
-; Records when each spell was learned, using the same 24-bit frame counter at
-; $662c as the item timestamps. Storage is 10 slots of 3 bytes at SPELL_TIMES,
-; inside the range init_save_ram clears, so 0 means "no timestamp".
-;
-; The hook replaces the "jsr $dbf0" in the level-up display loop that
-; show_spells_learned() writes at $eae6. That loop already walks newly learned
-; spells one at a time and is guarded against ones the player had, and a 3-byte
-; JSR for a 3-byte JSR shifts nothing.
-;
-; A spell learned at level 1 is granted at new-game init without a level-up, so
-; its slot stays zero. spell_level_table tells that apart from "not learned".
+; Both recorders live in exp_bank_3; see the note there. These are the
+; footholds in the only bank that is always mapped in.
 
-record_spell_time:     ; A = spell index + 16, exactly as b3_dbf0 expects it
-    pha                ; b3_dbf0 needs A intact - it is the name table index
-    sec
-    sbc #16            ; A = spell index 0..9, in dw_spells order
-    sta $3c            ; b3_dbf0 clobbers $3c itself, so it is free scratch here
-    asl a
-    clc
-    adc $3c
-    tax                ; X = byte offset into SPELL_TIMES (index * 3)
-    lda SPELL_TIMES,x
-    ora SPELL_TIMES+1,x
-    ora SPELL_TIMES+2,x
-    bne +              ; already recorded - keep the first time, not the last
-    lda SPELL_STAMP    ; the level-up's time, not the time this message showed
-    sta SPELL_TIMES,x
-    lda SPELL_STAMP+1
-    sta SPELL_TIMES+1,x
-    lda SPELL_STAMP+2
-    sta SPELL_TIMES+2,x
-+   pla
-    jmp b3_dbf0        ; tail-call the routine whose JSR we replaced
+record_spell_time:     ; A = spell index + 16, exactly as b3_dbf0 expects it.
+                        ; A has to be preserved here rather than inside the
+                        ; expansion routine: the bank restore ends with
+                        ; "lda $7004", so it destroys the accumulator on the way
+                        ; back. Tail-calls the routine whose jsr we replaced.
+    pha
+    ldy #22
+    jsr exec_expansion_sub
+    pla
+    jmp b3_dbf0
 
-snapshot_spell_time:   ; Captures the frame counter at the instant of a level-up.
-                       ; save_spells (written by show_spells_learned at $bfe0)
-                       ; stashes the old spell mask and then jumps to $f050 to
-                       ; apply the new level's stats; that jump is retargeted
-                       ; here, so this runs once per level-up, before any spell
-                       ; message is shown. Ends by continuing to $f050.
-    lda $662c
-    sta SPELL_STAMP
-    lda $662d
-    sta SPELL_STAMP+1
-    lda $662e
-    sta SPELL_STAMP+2
-    jmp $f050          ; carry on with the level-up the hook interrupted
+snapshot_spell_time:   ; entered by JMP from $3fe8, so it never returns here -
+                        ; it carries on into the level-up it interrupted.
+    ldy #24
+    jsr exec_expansion_sub
+    jmp $f050
+
 
 ; *** Ending stats, tail ends ***
 
@@ -376,7 +349,9 @@ exp_dispatch:
 .word exp_record_and_sort      ; 16 - records, then runs the sort
 .word exp_grant_erdricks_sword ; 18
 .word exp_grant_erdricks_armor ; 20
-; .word exp_torch_in_battle      ; 22
+.word exp_record_spell_time    ; 22
+.word exp_snapshot_spell_time  ; 24
+; .word exp_torch_in_battle      ; 26
 
 .org $c4f5
 
