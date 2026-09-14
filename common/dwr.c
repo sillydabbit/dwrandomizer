@@ -651,6 +651,8 @@ static void randomize_spells(dw_rom *rom)
 
     if (PERMANENT_REPEL(rom))
         spell_levels[REPEL] = 255;
+    if (PERMANENT_RADIANT(rom))
+        spell_levels[RADIANT] = 255;
     if (NO_HURTMORE(rom))
         spell_levels[HURTMORE] = 255;
 
@@ -1146,6 +1148,43 @@ static void permanent_torch(dw_rom *rom)
     vpatch(rom, 0xca60,    2,
             0xc9, 0x03          /* CMP #$03  ; Don't decrease the light */
                                 /*           ; radius if it's 3. */
+    );
+}
+
+/**
+ * Makes all caves as bright as Radiant, permanently.
+ *
+ * Radiant is the same mechanism Permanent Torch patches, at a larger radius:
+ * the spell grows the light radius to 7 and starts a timer, and each time the
+ * timer runs out the radius drops by 2 unless the compare at $ca60 says
+ * otherwise. So this is Permanent Torch's two patches at 7 instead of 3.
+ *
+ * Must run after permanent_torch(): it rewrites the same two bytes, which is
+ * what makes it take precedence when both flags are set. Radiant itself is
+ * dropped from spell learning in randomize_spells(), the same way Permanent
+ * Repel drops Repel.
+ *
+ * @param rom The rom struct
+ */
+static void permanent_radiant(dw_rom *rom)
+{
+    if (!PERMANENT_RADIANT(rom))
+        return;
+
+    printf("Making Radiant permanent...\n");
+
+    vpatch(rom, 0x2f18,    2,
+            0xa9,  0x07         /* LDA #$07  ; Set light radius to 7 instead */
+                                /*           ; of 1 when loading map         */
+    );
+    vpatch(rom, 0xca60,    2,
+            0xc9, 0x07          /* CMP #$07  ; Don't decrease the light */
+                                /*           ; radius if it's 7. */
+    );
+    /* The Torch item sets radius 3 with the timer stopped, so left alone it
+     * would dim a Radiant-lit cave for the rest of the dungeon. */
+    vpatch(rom, 0xdd47,    2,
+            0xa9, 0x07          /* LDA #$07  ; A torch keeps the light at 7 */
     );
 }
 
@@ -2147,6 +2186,7 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     torch_in_battle(&rom);
     repel_mods(&rom);
     permanent_torch(&rom);
+    permanent_radiant(&rom);
     rotate_dungeons(&rom);
     treasure_guards(&rom);
     sorted_inventory(&rom);

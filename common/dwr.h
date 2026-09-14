@@ -84,7 +84,7 @@
 #define SKIP_VANILLA_CREDITS(x)   (x->flags[14] & 0x04)
 
 #define UNUSED_230                (x->flags[ 2] & 0x30)
-#define UNUSED_203                (x->flags[ 2] & 0x03)
+#define PERMANENT_RADIANT(x)      (x->flags[ 2] & 0x03)
 #define UNUSED_603                (x->flags[ 6] & 0x03)
 #define UNUSED_830                (x->flags[ 8] & 0x30)
 #define UNUSED_110C               (x->flags[11] & 0x0c)
