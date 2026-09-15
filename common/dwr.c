@@ -2003,11 +2003,6 @@ static void skip_vanilla_credits(dw_rom *rom)
 }
 
 /**
- * Sets up the extra expansion banks
- *
- * @param rom The rom struct
- */
-/**
  * Publishes the level at which each spell is learned, for the stats screen.
  *
  * Writes one byte per spell in dw_spells order to spell_level_table, at CPU
@@ -2040,6 +2035,11 @@ static void write_spell_levels(dw_rom *rom)
     ppatch(&rom->expansion[0x7f00], sizeof(levels), levels);
 }
 
+/**
+ * Sets up the extra expansion banks
+ *
+ * @param rom The rom struct
+ */
 void setup_expansion(dw_rom *rom)
 {
     rom->header[4] = 8; /* set to 8 PRG banks */

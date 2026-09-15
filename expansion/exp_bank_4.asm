@@ -572,6 +572,12 @@ spell_order_lt:              ; CMP_SLOT_A, CMP_SLOT_B = spell indices.
                               ; timestamps tie or invert. Ties break
                               ; alphabetically; equal keys return 0, so the
                               ; insertion sort stays stable.
+                              ; Alphabetical ties are a deliberate choice, not
+                              ; the game's order: the level-up messages walk
+                              ; spells in dw_spells bit order, so OUTSIDE is
+                              ; announced before HURTMORE when both arrive at
+                              ; one level. Matching that would mean breaking
+                              ; ties on spell index instead of spell_alpha.
     ldx CMP_SLOT_A
     ldy CMP_SLOT_B
     lda spell_level_table,x
@@ -667,7 +673,7 @@ render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
     cmp #ITEM_ROW_COUNT
     bne @build_loop
 
-    ; --- insertion sort SORT_LIST[0..SORT_COUNT-1], earliest time first ---
+    ; --- insertion sort SORT_LIST[0..SORT_COUNT-1], by learn level (see spell_order_lt) ---
     lda SORT_COUNT
     cmp #2
     bcc @sort_done
@@ -951,7 +957,7 @@ render_item_times:            ; entry point for the INSTR_ITEM_TIMES opcode.
     jmp @sort_outer
 @sort_done:
 
-    ; --- render all 9 rows: acquired items (sorted), blank otherwise ---
+    ; --- render all ITEM_ROW_COUNT rows: acquired items (sorted), blank otherwise ---
     lda #<ITEM_ROW_ADDR
     sta ROW_START
     lda #>ITEM_ROW_ADDR
