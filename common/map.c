@@ -464,7 +464,6 @@ static dw_border_tile place(dw_map *map, dw_warp_index warp_idx, dw_tile tile,
  */
 static void place_charlock(dw_map *map, int largest, int next)
 {
-    int charlock_tries = 0;
 
     uint8_t x = 0, y = 0;
     int  i, j;
@@ -478,10 +477,8 @@ static void place_charlock(dw_map *map, int largest, int next)
     } else {
         warp = &map->warps_from[WARP_CHARLOCK];
 
-        /* Same hazard as place(): if no vanilla spot on this land mass sits
-         * inside the margin, this spins forever. Escalate for the same reason. */
         while(x < 7 || x > 118 || y < 3 || y > 116) {
-            map_find_land(map, largest, next, &x, &y, charlock_tries++ >= 100);
+            map_find_land(map, largest, next, &x, &y, FALSE);
         }
         warp->x = x-3;
         warp->y = y;
