@@ -4,6 +4,11 @@ FILLVALUE $ff
 CURRENT_TILE  EQU $E0
 SELECTED_ITEM EQU $D7
 ITEMS         EQU $C1
+A7_GUARDS     EQU 32    ; guard table capacity, see a7_spike_match
+A7_BEATEN     EQU $6808 ; one byte per guard, nonzero once beaten. $6808-$6827,
+                        ; inside the $672c-$682b range init_save_ram clears on
+                        ; New Game. The stats work uses up to $6806 and Tablet
+                        ; Cave Torch uses $6807.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks
