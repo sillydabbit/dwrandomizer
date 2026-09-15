@@ -1772,9 +1772,10 @@ static void no_keys(dw_rom *rom)
  */
 static void repel_mods(dw_rom *rom)
 {
-    if (REPEL_IN_DUNGEONS(rom))
+    if (REPEL_IN_DUNGEONS(rom)) {
         printf("Making repel work in dungeons...\n");
         vpatch(rom, 0xcf20, 2, 0xa9, 0x01);
+    }
 
     if (PERMANENT_REPEL(rom)) {
         printf("Making repel permanent...\n");
