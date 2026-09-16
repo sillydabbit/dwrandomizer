@@ -120,6 +120,131 @@ void check_quest_items(dw_rom *rom)
 }
 
 /**
+ * Determines whether a chest holds gold.
+ *
+ * The chest byte has five gold values, not one: GOLD (0x12) is the only one the
+ * randomizer writes, but a seed with chest shuffle off keeps vanilla's 0x13-0x16
+ * as well. 0x17 is Erdrick's tablet and is deliberately outside the range.
+ *
+ * @param item The item member of a chest
+ * @return A boolean indicating whether the chest holds gold
+ */
+static inline BOOL is_gold_chest(uint8_t item)
+{
+    return item >= GOLD && item <= 0x16;
+}
+
+/**
+ * Ranks a chest as a candidate to be turned into the guaranteed gold chest.
+ * Lower is better. Quest items are never candidates - moving one is how seeds
+ * become unwinnable - and neither are the static chests.
+ *
+ * @param chest The chest to be ranked
+ * @return A rank, or -1 if the chest must be left alone
+ */
+static int gold_candidate_rank(dw_chest *chest)
+{
+    if (is_static_chest(chest) || is_quest_item(chest->item))
+        return -1;
+
+    switch(chest->item) {
+        case HERB:
+        case TORCH:
+        case FAIRY_WATER:
+        case CURSED_BELT:
+            return 0;   /* junk: the cheapest thing to overwrite */
+        case WINGS:
+        case DRAGON_SCALE:
+        case KEY:
+            return 1;
+        default:
+            return 2;   /* an equipment or key item: a last resort */
+    }
+}
+
+/**
+ * Guarantees that Tantegel holds a gold chest, so the gold grind is always
+ * available.
+ *
+ * The grind works because the game only remembers 8 taken chests at a time
+ * ($e39a records into $601c-$602b and gives up silently once full), and the
+ * list is cleared by going out to the overworld but not by dying. A player who
+ * opens 8 chests anywhere and then dies on purpose lands in Tantegel with the
+ * list full, so every chest here is unrecorded and can be taken again after
+ * each death.
+ *
+ * It has to be a chest in the castle itself. The throne room is no use as a
+ * fallback: those chests are taken at the very start of the game and are gone
+ * by the time anyone wants to grind. move_chests() reserves a Tantegel spot
+ * when this flag is set, so the castle always has a chest to work with, even
+ * with Random Chest Locations on.
+ *
+ * Contents are *swapped* with a gold chest elsewhere where possible, which
+ * leaves the item pool exactly as the seed drew it and consumes no RNG, so
+ * seeds that already qualify are untouched.
+ *
+ * @param rom The rom struct
+ */
+void guarantee_gold_chest(dw_rom *rom)
+{
+    size_t i, candidate = CHEST_COUNT, donor = CHEST_COUNT;
+    int rank, best_rank = 99;
+    dw_chest *chest = rom->chests;
+    uint8_t tmp;
+
+    if (!GUARANTEED_GOLD(rom))
+        return;
+
+    printf("Guaranteeing a gold chest in Tantegel...\n");
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        if (chest[i].map != TANTEGEL)
+            continue;
+        if (is_gold_chest(chest[i].item))
+            return;  /* nothing to do */
+        rank = gold_candidate_rank(&chest[i]);
+        if (rank < 0)
+            continue;
+        if (rank < best_rank) {
+            best_rank = rank;
+            candidate = i;
+        }
+    }
+    if (candidate >= CHEST_COUNT) {
+        printf("  no chest in Tantegel could be used, leaving the seed alone\n");
+        return;
+    }
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        if (i == candidate || !is_gold_chest(chest[i].item))
+            continue;
+        if (is_static_chest(&chest[i]))
+            continue;
+        /* not the throne room either: those chests are opened in the first
+         * minute of the game, so swapping a key item into one would simply
+         * hand it to the player at the start */
+        if (chest[i].map == TANTEGEL_THRONE_ROOM)
+            continue;
+        /* never swap into Charlock: a key item moved in there can make the seed
+         * unwinnable, which is what check_quest_items() exists to prevent */
+        if (chest[i].map == CHARLOCK || chest[i].map == CHARLOCK_THRONE_ROOM
+                || (chest[i].map >= CHARLOCK_CAVE_1
+                    && chest[i].map <= CHARLOCK_CAVE_6))
+            continue;
+        donor = i;
+        break;
+    }
+
+    if (donor < CHEST_COUNT) {
+        tmp = chest[candidate].item;
+        chest[candidate].item = chest[donor].item;
+        chest[donor].item = tmp;
+    } else {
+        chest[candidate].item = GOLD;
+    }
+}
+
+/**
  * Patches the game code to allow Erdrick's Armor to be in a chest and other
  * items to be found on "searchable" spots
  *
@@ -393,9 +518,10 @@ static dw_chest *chest_at(dw_rom *rom, uint8_t x, uint8_t y, size_t until) {
  */
 static void move_chests(dw_rom *rom)
 {
-    size_t i, j;
+    size_t i, j, k;
     int bin, map;
     uint8_t *chest_spot, *new_door;
+    uint8_t tantegel_spot[3];
     uint8_t chest_bins[4] = { 3, 0, 0, 0};
     uint8_t chest_spots[][3] = {
 //         {TANTEGEL_THRONE_ROOM,  4,  4}, /* vanilla */
@@ -523,6 +649,29 @@ static void move_chests(dw_rom *rom)
     printf("Adding back chests...\n");
 chest_placement_retry:
     mt_shuffle(chest_spots, sizeof(chest_spots) / 3, 3);
+    /* Guaranteed Gold needs a chest that is still in Tantegel castle once the
+     * throne room's have been taken at the start of the game, and a shuffle can
+     * otherwise leave the castle with none at all. Move a Tantegel spot to the
+     * front so the first chest placed lands there. Swapping two entries of an
+     * already shuffled list consumes no RNG, so the rest of the placement is
+     * exactly what the seed would have produced anyway. */
+    if (GUARANTEED_GOLD(rom)) {
+        for (k=0; k < sizeof(chest_spots) / 3; k++) {
+            if (chest_spots[k][0] != TANTEGEL)
+                continue;
+            /* The spot also has to survive the loop's own occupancy test, which
+             * compares coordinates without regard to the map (chest_at). Five
+             * of the Tantegel spots are vanilla chest coordinates, so a spot
+             * reserved blindly is skipped for the same reason a taken one is,
+             * and the reservation quietly does nothing. */
+            if (chest_at(rom, chest_spots[k][1], chest_spots[k][2], 3))
+                continue;
+            memcpy(tantegel_spot, chest_spots[0], 3);
+            memcpy(chest_spots[0], chest_spots[k], 3);
+            memcpy(chest_spots[k], tantegel_spot, 3);
+            break;
+        }
+    }
     for (i=0, j=0; i < CHEST_COUNT; i++, j++) {
         map = rom->chests[i].map;
          /* don't mess with these */

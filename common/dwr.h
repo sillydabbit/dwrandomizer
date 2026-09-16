@@ -85,7 +85,7 @@
 
 #define UNUSED_230                (x->flags[ 2] & 0x30)
 #define UNUSED_203                (x->flags[ 2] & 0x03)
-#define UNUSED_603                (x->flags[ 6] & 0x03)
+#define GUARANTEED_GOLD(x)        (x->flags[ 6] & 0x03)
 #define UNUSED_830                (x->flags[ 8] & 0x30)
 #define UNUSED_110C               (x->flags[11] & 0x0c)
 #define UNUSED_1103               (x->flags[11] & 0x03)
