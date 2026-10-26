@@ -573,12 +573,20 @@ static void table_print(char **pos, char *end, table *t)
     free(t);
 }
 
+static void strip_trailing_spaces(char *text);
+
 /** The sections' names, in order: the contents list and the headings. */
 static const char *section_titles[] = {
     "How to read this log", "Flags", "Key items", "Chests & search spots", "Locations",
-    "Shops", "Hero stats", "Enemies", "Encounters"
+    "Shops", "Hero stats", "Enemies", "Encounters", "Stair shuffle"
 };
 #define SECTION_COUNT (sizeof(section_titles) / sizeof(section_titles[0]))
+
+/** The last section is only there when the stairs were shuffled. */
+static size_t section_count(dw_rom *rom)
+{
+    return STAIR_SHUFFLE(rom) ? SECTION_COUNT : SECTION_COUNT - 1;
+}
 
 /** A numbered section heading, padded out so the sections stand apart. */
 static void section(char **pos, char *end, int number)
@@ -721,7 +729,7 @@ static void add_header(char **pos, char *end, dw_rom *rom, uint64_t crc)
     add(pos, end, "Checksum: %016"PRIX64"\n", crc);
 
     add(pos, end, "\n\nCONTENTS\n\n");
-    for (i=0; i < SECTION_COUNT; i++)
+    for (i=0; i < section_count(rom); i++)
         add(pos, end, "  %2d. %s\n", (int)i + 1, section_titles[i]);
     add(pos, end, "\nTo jump to a section, search for its number, e.g. "
             "\"== 6.\"\n");
@@ -1569,6 +1577,737 @@ static void add_zones(char **pos, char *end, dw_rom *rom)
     table_print(pos, end, t);
 }
 
+/*
+ * Stair Shuffle. With the stairs shuffled the log gains two sections: the
+ * shortest way to each key item inside the shuffled dungeons, and where each
+ * entrance's stairs lead. The floors are unpacked from the rom and walked a
+ * tile at a time, taking a stair costing one step like any other move. Ties
+ * go to the tile that comes first by (map, x, y), so the same seed always
+ * prints the same paths.
+ */
+#define WARP_COUNT     51
+#define FLOOR_COUNT    16
+#define FLOOR_SIZE     32
+#define FLOOR_TILES    (FLOOR_SIZE * FLOOR_SIZE)
+#define TILE_COUNT     (FLOOR_COUNT * FLOOR_TILES)
+#define NO_TILE        (-1)
+#define ENTRANCE_COUNT 4
+#define PATH_WIDTH     4096    /* routes stay on one line, however long */
+#define ROWS_SIZE      16384
+#define NAME_SIZE      48
+#define MAX_HOPS       128
+#define MAX_PATHS      512
+#define MAX_NODES      4096
+#define MAX_KEY_ROWS   64
+
+/* the shuffled floors, in map order, so tile indexes sort as (map, x, y) do */
+static const uint8_t floors[FLOOR_COUNT] = {
+    CHARLOCK, CHARLOCK_THRONE_ROOM, CHARLOCK_CAVE_1, CHARLOCK_CAVE_2,
+    CHARLOCK_CAVE_3, CHARLOCK_CAVE_4, CHARLOCK_CAVE_5, CHARLOCK_CAVE_6,
+    MOUNTAIN_CAVE, MOUNTAIN_CAVE_2, GARINS_GRAVE_1, GARINS_GRAVE_2,
+    GARINS_GRAVE_3, GARINS_GRAVE_4, ERDRICKS_CAVE, ERDRICKS_CAVE_2
+};
+
+/* the entrances, in the order they are listed; Charlock is always last */
+static const struct { uint8_t warp; const char *name; } entrances[] = {
+    { WARP_ERDRICKS_CAVE, "Tablet Cave" },
+    { WARP_MOUNTAIN_CAVE, "Mountain" },
+    { WARP_GARINS_GRAVE,  "Grave" },
+    { WARP_CHARLOCK,      "Charlock" },
+};
+#define CHARLOCK_ENTRANCE (ENTRANCE_COUNT - 1)
+
+/* which way a stair lies from the middle of the stairs on its floor */
+enum {
+    DIR_CENTER, DIR_WEST, DIR_EAST, DIR_NORTH, DIR_SOUTH, DIR_NORTH_WEST,
+    DIR_NORTH_EAST, DIR_SOUTH_WEST, DIR_SOUTH_EAST, DIR_NONE
+};
+static const char *directions[] = {
+    "Center", "West", "East", "North", "South", "North-West", "North-East",
+    "South-West", "South-East"
+};
+
+/** How a walk reached a tile. */
+typedef struct {
+    int16_t cost;   /* steps from the entrance, or -1 if never reached */
+    int16_t order;  /* when it was first reached */
+    int16_t prev;   /* the tile before it, or NO_TILE */
+    uint8_t stair;  /* reached by taking the stair on prev */
+} walk_step;
+
+/** One node of a tree of paths: a stair, or the floor a path ends on. */
+typedef struct {
+    int key;        /* a tile index, or -1 - map for the floor a path ends on */
+    int16_t first, last, next;
+} path_node;
+
+typedef struct {
+    uint8_t width[FLOOR_COUNT], height[FLOOR_COUNT];
+    uint8_t tile[TILE_COUNT];       /* dungeon tile types */
+    int16_t area[TILE_COUNT];       /* the walkable part of a floor, or -1 */
+    uint8_t linked[TILE_COUNT];     /* a stair, with somewhere to go */
+    dw_warp link[TILE_COUNT];       /* where it goes */
+    uint8_t dir[TILE_COUNT];        /* its direction on the floor */
+    uint8_t num[TILE_COUNT];        /* 1, 2... when a direction is shared */
+    int start[ENTRANCE_COUNT];
+    walk_step walks[ENTRANCE_COUNT][TILE_COUNT];
+    int16_t list[2][TILE_COUNT];    /* scratch */
+    int16_t area_best[TILE_COUNT];
+    int16_t path[MAX_PATHS][MAX_HOPS];
+    int16_t path_len[MAX_PATHS];
+    uint8_t path_end[MAX_PATHS];
+    path_node node[MAX_NODES];
+    int node_count;
+    char parts[MAX_HOPS + 1][NAME_SIZE];
+} stair_model;
+
+static int floor_of(uint8_t map)
+{
+    int f;
+
+    for (f=0; f < FLOOR_COUNT; f++) {
+        if (floors[f] == map)
+            return f;
+    }
+    return -1;
+}
+
+static int tile_index(uint8_t map, int x, int y)
+{
+    int f = floor_of(map);
+
+    if (f < 0 || x < 0 || y < 0 || x >= FLOOR_SIZE || y >= FLOOR_SIZE)
+        return NO_TILE;
+    return f * FLOOR_TILES + x * FLOOR_SIZE + y;
+}
+
+#define TILE_FLOOR(t) ((t) / FLOOR_TILES)
+#define TILE_X(t)     ((t) % FLOOR_TILES / FLOOR_SIZE)
+#define TILE_Y(t)     ((t) % FLOOR_SIZE)
+
+static BOOL walkable_tile(uint8_t tile)
+{
+    return tile != DUNGEON_TILE_BLOCK && tile != DUNGEON_TILE_GWAELIN;
+}
+
+/** Charlock's top and bottom floors are drawn with town tiles. */
+static uint8_t from_town_tile(uint8_t tile)
+{
+    switch (tile) {
+        case TOWN_TILE_STAIRS_UP:   return DUNGEON_TILE_STAIRS_UP;
+        case TOWN_TILE_STAIRS_DOWN: return DUNGEON_TILE_STAIRS_DOWN;
+        case TOWN_TILE_CHEST:       return DUNGEON_TILE_CHEST;
+        case TOWN_TILE_DOOR:        return DUNGEON_TILE_DOOR;
+        case TOWN_TILE_GRASS:
+        case TOWN_TILE_DESERT:
+        case TOWN_TILE_BRICK:
+        case TOWN_TILE_TREES:
+        case TOWN_TILE_SWAMP:
+        case TOWN_TILE_BARRIER:
+        case TOWN_TILE_BRIDGE:      return DUNGEON_TILE_BRICK;
+        default:                    return DUNGEON_TILE_BLOCK;
+    }
+}
+
+/** Unpacks every floor, two tiles to a byte, as the game draws them. */
+static void load_floors(dw_rom *rom, stair_model *md)
+{
+    int f, x, y, k;
+    uint8_t map, nibble;
+    BOOL town;
+    dw_map_meta *meta;
+    const uint8_t *p;
+
+    for (f=0; f < FLOOR_COUNT; f++) {
+        map = floors[f];
+        meta = &rom->map.meta[map];
+        town = map == CHARLOCK || map == CHARLOCK_THRONE_ROOM;
+        md->width[f] = MIN(meta->width + 1, FLOOR_SIZE);
+        md->height[f] = MIN(meta->height + 1, FLOOR_SIZE);
+        p = &rom->content[(meta->pointer[0] | meta->pointer[1] << 8) & 0x7fff];
+        for (y=0; y < meta->height + 1; y++) {
+            for (x=0; x < meta->width + 1; x += 2, p++) {
+                for (k=0; k < 2; k++) {
+                    nibble = k ? *p & 0x0f : *p >> 4;
+                    if (x + k < FLOOR_SIZE && y < FLOOR_SIZE)
+                        md->tile[f * FLOOR_TILES + (x + k) * FLOOR_SIZE + y] =
+                                town ? from_town_tile(nibble) : nibble & 7;
+                }
+            }
+        }
+    }
+}
+
+/** Numbers each walkable part of each floor. */
+static void find_areas(stair_model *md)
+{
+    int f, x, y, t, n, nx, ny, nt, d, head, tail, areas = 0;
+    const int dx[] = { 1, -1, 0, 0 }, dy[] = { 0, 0, 1, -1 };
+    int16_t *queue = md->list[0];
+
+    for (t=0; t < TILE_COUNT; t++)
+        md->area[t] = -1;
+    for (f=0; f < FLOOR_COUNT; f++) {
+        for (y=0; y < md->height[f]; y++) {
+            for (x=0; x < md->width[f]; x++) {
+                t = f * FLOOR_TILES + x * FLOOR_SIZE + y;
+                if (md->area[t] >= 0 || !walkable_tile(md->tile[t]))
+                    continue;
+                n = areas++;
+                md->area[t] = n;
+                head = tail = 0;
+                queue[tail++] = t;
+                while (head < tail) {
+                    t = queue[head++];
+                    for (d=0; d < 4; d++) {
+                        nx = TILE_X(t) + dx[d];
+                        ny = TILE_Y(t) + dy[d];
+                        if (nx < 0 || ny < 0 || nx >= md->width[f]
+                                || ny >= md->height[f])
+                            continue;
+                        nt = f * FLOOR_TILES + nx * FLOOR_SIZE + ny;
+                        if (md->area[nt] < 0 && walkable_tile(md->tile[nt])) {
+                            md->area[nt] = n;
+                            queue[tail++] = nt;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Links both ends of every warp that touches a shuffled floor. When two warps
+ * share a tile, the later one is the one the tile leads to.
+ */
+static void link_stairs(dw_rom *rom, stair_model *md)
+{
+    int i, a, b;
+    dw_warp *from, *to;
+
+    for (i=0; i < WARP_COUNT; i++) {
+        from = &rom->map.warps_from[i];
+        to = &rom->map.warps_to[i];
+        a = tile_index(from->map, from->x, from->y);
+        b = tile_index(to->map, to->x, to->y);
+        if (a != NO_TILE) {
+            md->link[a] = *to;
+            md->linked[a] = TRUE;
+        }
+        if (b != NO_TILE) {
+            md->link[b] = *from;
+            md->linked[b] = TRUE;
+        }
+    }
+}
+
+/**
+ * Names each floor's stairs by which way they lie from the middle of them all,
+ * in eight directions. Stairs that share a direction are numbered top to
+ * bottom, then left to right. A floor with one stair besides the way out
+ * needs no direction.
+ */
+static void name_stairs(stair_model *md)
+{
+    int f, i, j, n, t, u, same, rank, sx, sy;
+    double cx, cy, dx, dy, ax, ay;
+    int16_t *pts = md->list[0];
+
+    for (f=0; f < FLOOR_COUNT; f++) {
+        n = sx = sy = 0;
+        for (t=f * FLOOR_TILES; t < (f + 1) * FLOOR_TILES; t++) {
+            if (!md->linked[t])
+                continue;
+            pts[n++] = t;
+            sx += TILE_X(t);
+            sy += TILE_Y(t);
+        }
+        /* a floor with only one stair besides the way out needs no
+         * directions at all */
+        for (i=same=0; i < n; i++)
+            same += floor_of(md->link[pts[i]].map) >= 0;
+        if (same <= 1) {
+            for (i=0; i < n; i++)
+                md->dir[pts[i]] = DIR_NONE;
+            continue;
+        }
+        cx = (double)sx / n;
+        cy = (double)sy / n;
+        for (i=0; i < n; i++) {
+            t = pts[i];
+            dx = TILE_X(t) - cx;
+            dy = TILE_Y(t) - cy;
+            ax = dx < 0 ? -dx : dx;
+            ay = dy < 0 ? -dy : dy;
+            if (ax < 1.5 && ay < 1.5)
+                md->dir[t] = DIR_CENTER;
+            else if (ax >= 2 * ay)
+                md->dir[t] = dx < 0 ? DIR_WEST : DIR_EAST;
+            else if (ay >= 2 * ax)
+                md->dir[t] = dy < 0 ? DIR_NORTH : DIR_SOUTH;
+            else if (dy < 0)
+                md->dir[t] = dx < 0 ? DIR_NORTH_WEST : DIR_NORTH_EAST;
+            else
+                md->dir[t] = dx < 0 ? DIR_SOUTH_WEST : DIR_SOUTH_EAST;
+        }
+        for (i=0; i < n; i++) {
+            t = pts[i];
+            same = 0;
+            rank = 1;
+            for (j=0; j < n; j++) {
+                u = pts[j];
+                if (md->dir[u] != md->dir[t])
+                    continue;
+                same++;
+                if (TILE_Y(u) < TILE_Y(t)
+                        || (TILE_Y(u) == TILE_Y(t) && TILE_X(u) < TILE_X(t)))
+                    rank++;
+            }
+            md->num[t] = same > 1 ? rank : 0;
+        }
+    }
+}
+
+/** Charlock's way out to the overworld is the same every seed; it is never
+ * named. Short Charlock can turn that tile into a real stair. */
+static BOOL hidden_stair(stair_model *md, int t)
+{
+    return floors[TILE_FLOOR(t)] == CHARLOCK && md->linked[t]
+            && floor_of(md->link[t].map) < 0;
+}
+
+/** "Grave B2 North-West 2", or just the floor if it needs no direction. */
+static const char *stair_label(stair_model *md, int t, char *buf)
+{
+    const char *floor = map_name(floors[TILE_FLOOR(t)]);
+
+    if (hidden_stair(md, t) || md->dir[t] == DIR_NONE)
+        snprintf(buf, NAME_SIZE, "%s", floor);
+    else if (md->num[t])
+        snprintf(buf, NAME_SIZE, "%s %s %d", floor, directions[md->dir[t]],
+                md->num[t]);
+    else
+        snprintf(buf, NAME_SIZE, "%s %s", floor, directions[md->dir[t]]);
+    return buf;
+}
+
+/** A warp's end: a stair if it is on a shuffled floor, otherwise a tile. */
+static const char *warp_label(stair_model *md, const dw_warp *warp, char *buf)
+{
+    int t = tile_index(warp->map, warp->x, warp->y);
+
+    if (t != NO_TILE)
+        return stair_label(md, t, buf);
+    snprintf(buf, NAME_SIZE, "%s (%d,%d)", map_name(warp->map), warp->x,
+            warp->y);
+    return buf;
+}
+
+static int compare_tiles(const void *a, const void *b)
+{
+    return *(const int16_t *)a - *(const int16_t *)b;
+}
+
+/** Reaches a walk's tile and records how, if it has not been reached yet. */
+static void reach(walk_step *w, int from, int to, BOOL stair, int *order,
+        int16_t *next, int *count)
+{
+    if (w[to].cost >= 0)
+        return;
+    w[to].cost = w[from].cost + 1;
+    w[to].order = (*order)++;
+    w[to].prev = from;
+    w[to].stair = stair;
+    next[(*count)++] = to;
+}
+
+/**
+ * The fewest steps from a tile to every tile it can reach, one step at a
+ * time; each step's tiles are expanded in (map, x, y) order.
+ */
+static void walk(stair_model *md, int start, walk_step *w)
+{
+    int t, i, d, f, nx, ny, order = 0, count, next_count, link;
+    const int dx[] = { 1, -1, 0, 0 }, dy[] = { 0, 0, 1, -1 };
+    int16_t *now = md->list[0], *next = md->list[1], *swap;
+
+    for (t=0; t < TILE_COUNT; t++)
+        w[t].cost = -1;
+    w[start].cost = 0;
+    w[start].order = order++;
+    w[start].prev = NO_TILE;
+    w[start].stair = FALSE;
+    now[0] = start;
+    count = 1;
+    while (count) {
+        qsort(now, count, sizeof(int16_t), compare_tiles);
+        next_count = 0;
+        for (i=0; i < count; i++) {
+            t = now[i];
+            f = TILE_FLOOR(t);
+            for (d=0; d < 4; d++) {
+                nx = TILE_X(t) + dx[d];
+                ny = TILE_Y(t) + dy[d];
+                if (nx < 0 || ny < 0 || nx >= md->width[f]
+                        || ny >= md->height[f])
+                    continue;
+                if (walkable_tile(md->tile[f * FLOOR_TILES + nx * FLOOR_SIZE
+                        + ny]))
+                    reach(w, t, f * FLOOR_TILES + nx * FLOOR_SIZE + ny, FALSE,
+                            &order, next, &next_count);
+            }
+            if (md->linked[t]) {
+                link = tile_index(md->link[t].map, md->link[t].x,
+                        md->link[t].y);
+                if (link != NO_TILE)
+                    reach(w, t, link, TRUE, &order, next, &next_count);
+            }
+        }
+        swap = now; now = next; next = swap;
+        count = next_count;
+    }
+}
+
+/** The stairs a walk takes to reach a tile, in order. */
+static int stairs_to(walk_step *w, int t, int16_t *hops)
+{
+    int n = 0, i, tmp;
+
+    for (; w[t].prev != NO_TILE; t = w[t].prev) {
+        if (w[t].stair && n < MAX_HOPS)
+            hops[n++] = w[t].prev;
+    }
+    for (i=0; i < n / 2; i++) {
+        tmp = hops[i]; hops[i] = hops[n - 1 - i]; hops[n - 1 - i] = tmp;
+    }
+    return n;
+}
+
+/**
+ * A chain of stairs joined by " > ", broken into lines no wider than width,
+ * and only between stairs. first and rest start the first line and the ones
+ * after it and count towards the width; the columns before them do not.
+ */
+static void add_chain(char **pos, char *end, char parts[][NAME_SIZE],
+        int count, const char *first_col, const char *first,
+        const char *rest_col, const char *rest, int width)
+{
+    int i, len, piece;
+    BOOL any = FALSE;
+
+    add(pos, end, "%s%s", first_col, first);
+    len = (int)strlen(first);
+    for (i=0; i < count; i++) {
+        piece = (int)strlen(parts[i]) + (i < count - 1 ? 2 : 0);
+        if (len + piece > width && any) {
+            add(pos, end, "\n%s%s", rest_col, rest);
+            len = (int)strlen(rest);
+            any = FALSE;
+        }
+        add(pos, end, "%s%s ", parts[i], i < count - 1 ? " >" : "");
+        len += piece + 1;
+        any = TRUE;
+    }
+    add(pos, end, "\n");
+}
+
+static void add_key_paths(char **pos, char *end, dw_rom *rom,
+        stair_model *md)
+{
+    struct { const char *label; int entrance, tile; } rows[MAX_KEY_ROWS];
+    int16_t hops[MAX_HOPS];
+    int targets[CHEST_COUNT + 1], k, i, e, best, t, n, h, count = 0,
+        rcount = 0, w1, w2, width;
+    const char *labels[CHEST_COUNT + 1], *last = NULL;
+    char first_col[96], rest_col[96], *rows_buf, *rpos, *rend, *line, *eol;
+
+    section(pos, end, 10);
+    add(pos, end, "Shortest path to key items\n\n");
+    add(pos, end,
+        "The shortest way to each key item that sits inside the shuffled "
+        "dungeons, and\nto the Dragonlord. Start at the entrance named, then "
+        "take each stair in turn.\nThe path ends on the floor in parentheses "
+        "( ). Charlock is listed only when it\nis the sole way in or the "
+        "shorter one.\n\n");
+
+    for (k=0; k < (int)sizeof(key_items); k++) {
+        for (i=0; i < CHEST_COUNT; i++) {
+            t = tile_index(rom->chests[i].map, rom->chests[i].x,
+                    rom->chests[i].y);
+            if (rom->chests[i].item == key_items[k] && t != NO_TILE) {
+                labels[count] = item_name(key_items[k]);
+                targets[count++] = t;
+            }
+        }
+    }
+    labels[count] = "Dragonlord";
+    targets[count++] = tile_index(CHARLOCK_THRONE_ROOM, 10, 29);
+
+    /* the quickest outside entrance; Charlock too if it is the only way in
+     * or quicker still */
+    for (i=0; i < count; i++) {
+        t = targets[i];
+        best = -1;
+        for (e=0; e < CHARLOCK_ENTRANCE; e++) {
+            if (md->walks[e][t].cost >= 0 && (best < 0
+                    || md->walks[e][t].cost < md->walks[best][t].cost))
+                best = e;
+        }
+        if (best >= 0 && rcount < MAX_KEY_ROWS) {
+            rows[rcount].label = labels[i];
+            rows[rcount].entrance = best;
+            rows[rcount++].tile = t;
+        }
+        if (md->walks[CHARLOCK_ENTRANCE][t].cost >= 0 && (best < 0
+                || md->walks[CHARLOCK_ENTRANCE][t].cost
+                    < md->walks[best][t].cost) && rcount < MAX_KEY_ROWS) {
+            rows[rcount].label = labels[i];
+            rows[rcount].entrance = CHARLOCK_ENTRANCE;
+            rows[rcount++].tile = t;
+        }
+    }
+    if (!rcount) {
+        add(pos, end, "None of the key items are inside these dungeons.\n");
+        return;
+    }
+
+    w1 = (int)strlen("Key item");
+    w2 = (int)strlen("From");
+    for (i=0; i < rcount; i++) {
+        w1 = MAX(w1, (int)strlen(rows[i].label));
+        w2 = MAX(w2, (int)strlen(entrances[rows[i].entrance].name));
+    }
+    /* the rows go to a buffer first, so the rules can match the widest */
+    rows_buf = malloc(ROWS_SIZE);
+    if (!rows_buf)
+        return;
+    rpos = rows_buf;
+    rend = rows_buf + ROWS_SIZE;
+    *rpos = '\0';
+    snprintf(rest_col, sizeof(rest_col), "%-*s    %-*s    ", w1, "", w2, "");
+    for (i=0; i < rcount; i++) {
+        t = rows[i].tile;
+        n = stairs_to(md->walks[rows[i].entrance], t, hops);
+        for (h=0; h < n; h++)
+            stair_label(md, hops[h], md->parts[h]);
+        snprintf(md->parts[n++], NAME_SIZE, "(%s)",
+                map_name(floors[TILE_FLOOR(t)]));
+        snprintf(first_col, sizeof(first_col), "%-*s    %-*s    ", w1,
+                rows[i].label != last ? rows[i].label : "", w2,
+                entrances[rows[i].entrance].name);
+        add_chain(&rpos, rend, md->parts, n, first_col, "", rest_col, "",
+                PATH_WIDTH - w1 - w2 - 8);
+        last = rows[i].label;
+    }
+    strip_trailing_spaces(rows_buf);
+
+    width = w1 + w2 + 8 + (int)strlen("Path");
+    for (line=rows_buf; *line; line = eol + 1) {
+        eol = strchr(line, '\n');
+        if (!eol)
+            break;
+        width = MAX(width, (int)(eol - line));
+    }
+    add(pos, end, "%-*s    %-*s    Path\n", w1, "Key item", w2, "From");
+    add_rule(pos, end, '=', width);
+    add(pos, end, "%s", rows_buf);
+    add_rule(pos, end, '-', width);
+    free(rows_buf);
+}
+
+/** A child of a path tree node with the given key, added if it is new. */
+static int path_child(stair_model *md, int parent, int key)
+{
+    int c;
+    path_node *node;
+
+    for (c=md->node[parent].first; c >= 0; c=md->node[c].next) {
+        if (md->node[c].key == key)
+            return c;
+    }
+    if (md->node_count >= MAX_NODES)
+        return parent;
+    c = md->node_count++;
+    node = &md->node[c];
+    node->key = key;
+    node->first = node->last = node->next = -1;
+    if (md->node[parent].last >= 0)
+        md->node[md->node[parent].last].next = c;
+    else
+        md->node[parent].first = c;
+    md->node[parent].last = c;
+    return c;
+}
+
+/** A stair, or "(Grave B3)" for the floor a path ends on. */
+static const char *node_label(stair_model *md, int c, char *buf)
+{
+    if (md->node[c].key >= 0)
+        return stair_label(md, md->node[c].key, buf);
+    snprintf(buf, NAME_SIZE, "(%s)", map_name(-1 - md->node[c].key));
+    return buf;
+}
+
+#define TREE_PREFIX 160
+
+/**
+ * Prints a path tree the way a directory tree is drawn: each branch starts
+ * with "+--", and a "|" line runs down from it to the next branch that
+ * splits from the same stair. A run of stairs with nothing branching off is
+ * one chain; when it wraps, the next line starts four further in than the
+ * branch, so a wrapped line never looks like a branch of its own.
+ */
+static void add_path_nodes(char **pos, char *end, stair_model *md, int parent,
+        const char *prefix)
+{
+    int c, node, n;
+    BOOL last;
+    char first[TREE_PREFIX], rest[TREE_PREFIX], below[TREE_PREFIX];
+
+    for (c=md->node[parent].first; c >= 0; c=md->node[c].next) {
+        last = md->node[c].next < 0;
+        n = 0;
+        node = c;
+        node_label(md, node, md->parts[n++]);
+        while (md->node[node].first >= 0
+                && md->node[node].first == md->node[node].last) {
+            node = md->node[node].first;
+            if (n < MAX_HOPS)
+                node_label(md, node, md->parts[n++]);
+        }
+        snprintf(below, sizeof(below), "%s%s", prefix, last ? "    " : "|   ");
+        snprintf(first, sizeof(first), "%s+-- ", prefix);
+        snprintf(rest, sizeof(rest), "%s%s", below,
+                md->node[node].first >= 0 ? "|   " : "    ");
+        add_chain(pos, end, md->parts, n, first, "", rest, "",
+                PATH_WIDTH - (int)strlen(rest));
+        if (md->node[node].first >= 0)
+            add_path_nodes(pos, end, md, node, below);
+    }
+}
+
+/**
+ * The shortest stairs from an entrance to every part of every floor it
+ * reaches, as a tree. A path that leads only to the start of a longer one is
+ * left out, and each path ends with the floor it arrives on.
+ */
+static void add_entrance_paths(char **pos, char *end, stair_model *md, int e)
+{
+    walk_step *w = md->walks[e];
+    int16_t *by_order = md->list[0], *areas = md->list[1];
+    int t, i, j, k, a, n = 0, area_count = 0, paths = 0, node;
+    int start = md->start[e];
+    BOOL longer;
+
+    for (t=0; t < TILE_COUNT; t++) {
+        md->area_best[t] = NO_TILE;
+        if (w[t].cost >= 0) {
+            by_order[w[t].order] = t;
+            n++;
+        }
+    }
+    /* the cheapest arrival by stair in each part of each floor; the first
+     * reached wins a tie */
+    for (i=0; i < n; i++) {
+        t = by_order[i];
+        if (!w[t].stair)
+            continue;
+        a = md->area[t];
+        if (a < 0)
+            continue;
+        if (md->area_best[a] == NO_TILE)
+            areas[area_count++] = a;
+        else if (w[t].cost >= w[md->area_best[a]].cost)
+            continue;
+        md->area_best[a] = t;
+    }
+    for (i=0; i < area_count && paths < MAX_PATHS; i++) {
+        if (areas[i] == md->area[start])
+            continue;
+        t = md->area_best[areas[i]];
+        md->path_len[paths] = stairs_to(w, t, md->path[paths]);
+        md->path_end[paths++] = floors[TILE_FLOOR(t)];
+    }
+    if (!paths) {
+        md->path_len[paths] = 0;
+        md->path_end[paths++] = floors[TILE_FLOOR(start)];
+    }
+
+    md->node_count = 1;
+    md->node[0].first = md->node[0].last = md->node[0].next = -1;
+    for (i=0; i < paths; i++) {
+        longer = FALSE;
+        for (j=0; j < paths && !longer; j++) {
+            if (md->path_len[j] <= md->path_len[i])
+                continue;
+            for (k=0; k < md->path_len[i]; k++) {
+                if (md->path[j][k] != md->path[i][k])
+                    break;
+            }
+            longer = k == md->path_len[i] && k > 0;
+        }
+        if (longer)
+            continue;
+        node = 0;
+        for (k=0; k < md->path_len[i]; k++)
+            node = path_child(md, node, md->path[i][k]);
+        path_child(md, node, -1 - md->path_end[i]);
+    }
+    add_path_nodes(pos, end, md, 0, "");
+}
+
+static void add_navigation(char **pos, char *end, stair_model *md)
+{
+    int e;
+
+    /* No table of where each entrance lands: an entrance always lands on
+     * its vanilla stair, and Locations already gives its overworld tile. */
+    add(pos, end, "\nRoutes from each entrance\n\n");
+    add(pos, end,
+        "There is one block for each dungeon entrance, listing the routes from "
+        "it.\nA stair is named by its floor and the side of the floor it is "
+        "on, and >\nmeans take the next stair. A route ends in parentheses "
+        "( ).\n\nEach +-- starts a route. Routes that begin the same "
+        "way branch off it, and a\n| line connects them. Any route can be "
+        "walked back the way it came, since\nstairs go both ways. Only the "
+        "shortest route to each place is shown. Stairs\nthat no route needs "
+        "are left out.\n");
+
+    for (e=0; e < ENTRANCE_COUNT; e++) {
+        add(pos, end, "\n[%s]\n", entrances[e].name);
+        add_entrance_paths(pos, end, md, e);
+    }
+}
+
+/** The two Stair Shuffle sections. Returns FALSE if there was no memory. */
+static BOOL add_stairs(char **pos, char *end, dw_rom *rom)
+{
+    int e;
+    dw_warp *to;
+    stair_model *md = calloc(1, sizeof(stair_model));
+
+    if (!md)
+        return FALSE;
+    load_floors(rom, md);
+    find_areas(md);
+    link_stairs(rom, md);
+    name_stairs(md);
+    for (e=0; e < ENTRANCE_COUNT; e++) {
+        to = &rom->map.warps_to[entrances[e].warp];
+        md->start[e] = tile_index(to->map, to->x, to->y);
+        if (md->start[e] == NO_TILE) {
+            free(md);
+            return FALSE;
+        }
+        walk(md, md->start[e], md->walks[e]);
+    }
+    add_key_paths(pos, end, rom, md);
+    add_navigation(pos, end, md);
+    free(md);
+    return TRUE;
+}
+
 /**
  * Removes the spaces left at the ends of lines by fixed-width columns that
  * have nothing in them, in place.
@@ -1619,6 +2358,10 @@ char *dwr_spoiler(dw_rom *rom, uint64_t crc)
     add_enemies(&pos, end, rom, spells);
     add_zones(&pos, end, rom);
     add_encounters(&pos, end, rom);
+    if (STAIR_SHUFFLE(rom) && !add_stairs(&pos, end, rom)) {
+        free(buf);
+        return NULL;
+    }
 
     if (pos >= end - 1)
         strcpy(end - sizeof(truncated), truncated);
