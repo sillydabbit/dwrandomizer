@@ -90,7 +90,9 @@
 #define UNUSED_110C               (x->flags[11] & 0x0c)
 #define UNUSED_1103               (x->flags[11] & 0x03)
 #define UNUSED_1402               (x->flags[14] & 0x02)
-#define UNUSED_1401               (x->flags[14] & 0x01)
+/* A single bit, deliberately: update_flags() only resolves "maybe" in
+ * flags[0..12], so a spoiler log can only be on or off, never random. */
+#define SPOILER_LOG(x)            (x->flags[14] & 0x01)
 
 #ifdef __cplusplus
 extern "C" {
@@ -109,6 +111,7 @@ extern "C" {
 uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
         const char *sprite_name, const char* output_dir);
 uint16_t set_text(dw_rom *rom, const size_t address, char *text);
+size_t dw2ascii(uint8_t *string, size_t bufsize);
 
 #ifdef __cplusplus
 }
