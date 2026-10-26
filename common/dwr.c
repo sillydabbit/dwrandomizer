@@ -15,6 +15,7 @@
 #include "dungeon_maps.h"
 #include "stair_shuffle.h"
 #include "chests.h"
+#include "spoiler.h"
 #include "challenge.h"
 #include "crc64.h"
 #include "mt64.h"
@@ -2103,6 +2104,18 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     }
     rom.seed = seed;
 
+    /* The spoiler log deliberately changes the game. Burning a draw here
+     * shifts every later one, so the same seed with the flag on is a
+     * different - but still reproducible - randomization, and nobody can
+     * turn the log on to read the answers for a seed meant to be played
+     * without it. Do NOT replace this with mt_init(seed ^ SALT): the salt
+     * would be public, and generating seed^SALT with the flag on would hand
+     * back the original game with an accurate spoiler. No seed initialises
+     * the generator into an already-advanced state, so this has no inverse.
+     * It runs after dwr_init(), which is where the flags are parsed. */
+    if (SPOILER_LOG((&rom)))
+        mt_rand(0, 0xffff);
+
     /* Clear the unused code so we can make sure it's unused */
 #ifdef CLEAR_ALL_UNUSED_DATA
     memset(&rom.content[0x1314], 0xff, 0x1332 - 0x1314);
@@ -2183,6 +2196,21 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     printf("Checksum: %016"PRIx64"\n", crc);
     if (!dwr_write(&rom, output_file)) {
         return 0;
+    }
+    if (SPOILER_LOG((&rom))) {
+        /* Written last, so it reports the chests, search spots and locations
+         * the player will actually find - open_charlock() and no_keys() both
+         * rewrite chest contents late in the run above. */
+        char spoiler_file[1025] = { 0 };
+
+        snprintf(spoiler_file, 1024, "%s/DWRando.%"PRIu64".%s.spoiler.txt",
+                output_dir, seed, flags);
+        if (dwr_write_spoiler(&rom, crc, spoiler_file)) {
+            printf("Wrote spoiler log to %s\n", spoiler_file);
+        } else {
+            fprintf(stderr, "Unable to write the spoiler log to %s\n",
+                    spoiler_file);
+        }
     }
     free(rom.header);
     free(rom.expansion);
