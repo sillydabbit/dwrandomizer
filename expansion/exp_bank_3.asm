@@ -104,6 +104,48 @@ exp_sort_inventory:
     beq --
 +   jmp exp_load_last_bank
 
+; *** Progressive Equipment (A8) ***
+; In:  X = shop item index * 2. Weapons are items 0-6, armor 7-13, shields
+;      14-16 (Erdrick's Sword and Armor are 6 and 13).
+; Out: Y = worn tier - required tier, signed; X is kept.
+; The equipment byte $be holds each slot as worn item + 1 within its category
+; (0 = nothing), so the tier just below item i is a worn value of i minus the
+; category's first index. The rule is "at least the tier below": downgrades and
+; buying the same piece again are allowed.
+A8_ITEM EQU $7f03          ; scratch, next to the $7f01-02 that
+                           ; exec_expansion_sub uses
+exp_progressive_check:
+    txa
+    lsr a
+    sta A8_ITEM
+    lda $be
+    cpx #7*2
+    bcc @weapon
+    cpx #14*2
+    bcc @armor
+    and #$03               ; shield, worn value + 14
+    clc
+    adc #14
+    bne @diff              ; always taken
+@armor:
+    lsr a
+    lsr a
+    and #$07               ; armor, worn value + 7
+    clc
+    adc #7
+    bne @diff              ; always taken
+@weapon:
+    lsr a
+    lsr a
+    lsr a
+    lsr a
+    lsr a                  ; weapon, worn value + 0
+@diff:
+    sec
+    sbc A8_ITEM
+    tay
+    jmp exp_load_last_bank
+
 ; exp_torch_in_battle:
 ;     cmp #$04            ; is this a torch?
 ;     bne +++             ; no, go to next check

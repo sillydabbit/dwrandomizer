@@ -1623,6 +1623,163 @@ static BOOL should_be_guarded(dw_chest_content item)
 }
 
 /**
+ * Progressive Equipment: makes sure every weapon, armor and shield is sold in
+ * at least one weapon shop. randomize_shops() draws its 36 slots from the 15
+ * pieces with replacement, so pieces can go missing; each missing piece takes
+ * over a random slot whose piece is sold in more than one place. With shops
+ * not randomized, the vanilla shops already sell every piece and nothing
+ * changes.
+ *
+ * @param rom The rom struct
+ */
+static void progressive_shops(dw_rom *rom)
+{
+    uint8_t *slot, *shop_start, *candidates[36], *pick;
+    size_t count[SHOP_END] = { 0 }, n;
+    int shop, missing;
+
+    /* count every piece across the 7 weapon shops */
+    for (slot = rom->weapon_shops, shop = 0; shop < 7; slot++) {
+        if (*slot == SHOP_END)
+            shop++;
+        else
+            count[*slot]++;
+    }
+
+    for (missing = BAMBOO_POLE; missing <= SILVER_SHIELD; missing++) {
+        if (missing == ERDRICKS_SWORD || missing == ERDRICKS_ARMOR
+                || count[missing])
+            continue;
+
+        /* any slot holding a duplicated piece will do: no shop sells the
+         * missing piece, so it cannot end up twice in one shop */
+        n = 0;
+        for (slot = rom->weapon_shops, shop = 0; shop < 7; slot++) {
+            if (*slot == SHOP_END)
+                shop++;
+            else if (count[*slot] > 1)
+                candidates[n++] = slot;
+        }
+        /* cannot happen: 36 slots and at most 14 different pieces */
+        assert(n);
+        pick = candidates[mt_rand(0, n - 1)];
+        count[*pick]--;
+        count[missing]++;
+        *pick = missing;
+
+        /* keep the shop sorted, as randomize_shops() leaves it */
+        for (shop_start = pick; shop_start > rom->weapon_shops
+                && shop_start[-1] != SHOP_END; shop_start--) {}
+        for (slot = pick; *slot != SHOP_END; slot++) {}
+        qsort(shop_start, slot - shop_start, sizeof(uint8_t), &compare);
+    }
+}
+
+/**
+ * Progressive Equipment: keeps Erdrick's Sword and Armor out of the Tantegel
+ * throne room chests. Those chests do not respawn, and with this flag the
+ * player cannot take either item at the start of the game, so it would be lost
+ * for good. Each one is swapped with an ordinary item from another chest.
+ * Runs after check_quest_items(), which can itself move the armor.
+ *
+ * @param rom The rom struct
+ */
+static void progressive_throne_room(dw_rom *rom)
+{
+    size_t i, j, n, candidates[CHEST_COUNT];
+    uint8_t item;
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        item = rom->chests[i].item;
+        if (rom->chests[i].map != TANTEGEL_THRONE_ROOM
+                || (item != SWORD && item != ARMOR))
+            continue;
+
+        /* Only ordinary items are swapped in: moving a key or a quest item
+         * would change the access logic already worked out for this seed. */
+        n = 0;
+        for (j=0; j < CHEST_COUNT; j++) {
+            if (rom->chests[j].map == TANTEGEL_THRONE_ROOM)
+                continue;
+            switch (rom->chests[j].item) {
+                case GOLD: case HERB: case TORCH: case FAIRY_WATER:
+                case WINGS: case DRAGON_SCALE: case RING: case CURSED_BELT:
+                    break;
+                default:
+                    continue;
+            }
+            /* same rule check_quest_items() applies to the armor */
+            if (item == ARMOR && NO_ARMOR_IN_CHARLOCK(rom)
+                    && (rom->chest_access[j] & 0x88))
+                continue;
+            candidates[n++] = j;
+        }
+        if (!n) {
+            /* never seen; leave the seed as it is rather than break it */
+            printf("Warning: no chest to swap Erdrick's item out of the "
+                    "throne room\n");
+            continue;
+        }
+        j = candidates[mt_rand(0, n - 1)];
+        rom->chests[i].item = rom->chests[j].item;
+        rom->chests[j].item = item;
+    }
+}
+
+/**
+ * Progressive Equipment: a weapon, armor or shield can only be bought while
+ * wearing the tier below it (or better), and Erdrick's Sword and Armor can
+ * only be taken while wearing the Flame Sword / Magic Armor (or the item
+ * itself, which is the game's usual "already have it" case). The tier logic is
+ * in exp_bank_3.asm and the glue in bank_3_patch.asm ($c960).
+ *
+ * @param rom The rom struct
+ */
+static void progressive_equipment(dw_rom *rom)
+{
+    /* F8 = hero's name, F7 = the item's name, FC = end of message */
+    uint8_t text[] = "\xf8 is not yet worthy of the \xf7.\xfc";
+    uint8_t *tablet = &rom->content[0xb34c];
+    size_t len = sizeof(text) - 1;
+
+    if (!PROGRESSIVE_EQUIPMENT(rom))
+        return;
+
+    printf("Making equipment progressive...\n");
+    progressive_shops(rom);
+    progressive_throne_room(rom);
+
+    /* weapon shop: check the tier before the gold ("lda $bc / sec") */
+    add_hook(rom, JSR, 0xd589, A8_SHOP_GATE);
+
+    /* Erdrick's Sword: "lda $be / and #$e0 / cmp #$e0 / bne $e2a6". $e2a3
+     * stays put: five other items branch to it. */
+    add_hook(rom, JSR, 0xe29b, A8_SWORD_GATE);
+    vpatch(rom, 0xe29e, 5,
+        0xd0, 0x06,        /* bne $e2a6 ; take it                          */
+        0xea, 0xea, 0xea); /* nop x3    ; already have it -> $e2a3         */
+
+    /* Erdrick's Armor, in the TAKE code rewrite_search_take_code() wrote:
+     * "lda $be / and #$1c / cmp #$1c / beq $e345" */
+    add_hook(rom, JSR, 0xe2ee, A8_ARMOR_GATE);
+    vpatch(rom, 0xe2f1, 5,
+        0xf0, 0x52,        /* beq $e345 ; already have it                  */
+        0xea, 0xea, 0xea); /* nop x3    ; take it -> $e2f6                 */
+
+    /* The refusal reuses message $103, the tablet's text, which nothing in
+     * the randomizer can show any more (the tablet is gone). Messages are
+     * found by counting terminators from the start of their 16-message
+     * block, so the rest of the block ($104-$10f, up to block 17 at $b68b)
+     * moves up behind the new, shorter text and the gap is filled with
+     * spaces, which are never read. */
+    assert(rom->content[0xb522] == 0xfc && rom->content[0xb68a] == 0xfc);
+    memmove(tablet + len, &rom->content[0xb523], 0xb68b - 0xb523);
+    memset(tablet + len + (0xb68b - 0xb523), 0x5f, 0xb523 - 0xb34c - len);
+    ascii2dw(text);
+    memcpy(tablet, text, len);
+}
+
+/**
  * Adds "spike" tiles to chests and search locations that should be guarded
  *
  * @param rom The rom struct
@@ -2127,6 +2284,7 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     randomize_zone_layout(&rom);
     randomize_zones(&rom);
     randomize_shops(&rom);
+    progressive_equipment(&rom);
     randomize_growth(&rom);
     randomize_spells(&rom);
     update_drops(&rom);

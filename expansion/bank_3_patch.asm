@@ -259,6 +259,77 @@ modify_run_rate:
 
 .org $c7ec
     ; potentially unused data
+
+; *** Progressive Equipment (A8) ***
+; Pinned to the end of this window so it stays clear of Oops All Treasure Guards,
+; which fills it from $c818 up. The tier logic itself is in exp_bank_3.asm; this
+; is only the glue that has to be in the fixed bank. Hooked by
+; progressive_equipment() in dwr.c, and only when the flag is on.
+.org $c960
+
+; X = shop item index * 2 (0-16; 6 and 13 are Erdrick's Sword and Armor).
+; Returns Y = worn tier - required tier, signed: negative = not allowed yet,
+; 0 = wearing the tier just below, 1 = wearing that tier or better. X is kept.
+; Does its own bank switch rather than take a slot in the $c288 dispatch table:
+; a new slot would move every routine after the table, and upstream hooks into
+; them are written before the checksum, so seeds without A8 would change.
+; exp_progressive_check ends with exp_load_last_bank, which switches back and
+; returns to our caller.
+a8_check:
+    lda $6004          ; the bank in use, for exp_load_last_bank
+    sta $7004
+    lda #3
+    jsr store_and_load_prg_bank
+    jmp exp_progressive_check
+
+; Weapon shop. Replaces "lda $bc / sec" at $d589, the start of the gold check,
+; so the tier is checked before the gold. X = item * 2, and the item's name is
+; already in the {F7} buffer ($d579).
+a8_shop_gate:
+    jsr a8_check
+    tya
+    bmi @refuse
+    lda $bc            ; the two instructions this hook replaced
+    sec
+    rts
+@refuse:
+    pla                ; drop the return address: the gold check is skipped
+    pla
+    jsr do_dialog_hi
+    .db $03            ; msg $103: "{NAME} is not yet worthy of the {F7}."
+    jmp $d664          ; "anything more?", as after "not enough money"
+
+; Erdrick's Sword ($e29b) and Armor ($e2ee). Each replaces an "already have
+; it?" compare, and returns Z set = already have it (the original empty path),
+; Z clear = take it. If the tier below is not worn yet, the item is refused and
+; the chest stays closed: $e355, which marks a chest opened, is never called.
+a8_sword_gate:
+    ldx #6*2
+    .db $2c            ; bit abs: skips the ldx below
+a8_armor_gate:
+    ldx #13*2
+    jsr a8_check
+    tya
+    bmi @refuse
+    cpy #1             ; 1 = already wearing it
+    rts
+@refuse:
+    pla                ; leave the TAKE command
+    pla
+    lda #0
+    sta $0e            ; $ff = "this is a search spot"; $e355 would clear it
+    txa
+    lsr a              ; item index, carry clear (X is even)
+    adc #$1b           ; its name, as the shop does at $d576
+    jsr $dbf0          ; into {F7}
+    jsr do_dialog_hi
+    .db $03            ; msg $103: "{NAME} is not yet worthy of the {F7}."
+    jmp $cfd9          ; end of command, as finish_text ($d242) does
+
+.if $ > $c9b5
+    .error "A8 has overrun the $c7ec-$c9b5 window"
+.endif
+
 .org $c9b5
 
 .org $f232

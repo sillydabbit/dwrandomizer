@@ -87,7 +87,7 @@
 #define UNUSED_203                (x->flags[ 2] & 0x03)
 #define UNUSED_603                (x->flags[ 6] & 0x03)
 #define UNUSED_830                (x->flags[ 8] & 0x30)
-#define UNUSED_110C               (x->flags[11] & 0x0c)
+#define PROGRESSIVE_EQUIPMENT(x)  (x->flags[11] & 0x0c)
 #define UNUSED_1103               (x->flags[11] & 0x03)
 #define UNUSED_1402               (x->flags[14] & 0x02)
 #define UNUSED_1401               (x->flags[14] & 0x01)
