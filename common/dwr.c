@@ -1661,7 +1661,10 @@ static void progressive_shops(dw_rom *rom)
                 candidates[n++] = slot;
         }
         /* cannot happen: 36 slots and at most 14 different pieces */
-        assert(n);
+        if (!n) {
+            printf("Warning: no shop slot free for a missing piece\n");
+            return;
+        }
         pick = candidates[mt_rand(0, n - 1)];
         count[*pick]--;
         count[missing]++;
@@ -1672,57 +1675,6 @@ static void progressive_shops(dw_rom *rom)
                 && shop_start[-1] != SHOP_END; shop_start--) {}
         for (slot = pick; *slot != SHOP_END; slot++) {}
         qsort(shop_start, slot - shop_start, sizeof(uint8_t), &compare);
-    }
-}
-
-/**
- * Progressive Equipment: keeps Erdrick's Sword and Armor out of the Tantegel
- * throne room chests. Those chests do not respawn, and with this flag the
- * player cannot take either item at the start of the game, so it would be lost
- * for good. Each one is swapped with an ordinary item from another chest.
- * Runs after check_quest_items(), which can itself move the armor.
- *
- * @param rom The rom struct
- */
-static void progressive_throne_room(dw_rom *rom)
-{
-    size_t i, j, n, candidates[CHEST_COUNT];
-    uint8_t item;
-
-    for (i=0; i < CHEST_COUNT; i++) {
-        item = rom->chests[i].item;
-        if (rom->chests[i].map != TANTEGEL_THRONE_ROOM
-                || (item != SWORD && item != ARMOR))
-            continue;
-
-        /* Only ordinary items are swapped in: moving a key or a quest item
-         * would change the access logic already worked out for this seed. */
-        n = 0;
-        for (j=0; j < CHEST_COUNT; j++) {
-            if (rom->chests[j].map == TANTEGEL_THRONE_ROOM)
-                continue;
-            switch (rom->chests[j].item) {
-                case GOLD: case HERB: case TORCH: case FAIRY_WATER:
-                case WINGS: case DRAGON_SCALE: case RING: case CURSED_BELT:
-                    break;
-                default:
-                    continue;
-            }
-            /* same rule check_quest_items() applies to the armor */
-            if (item == ARMOR && NO_ARMOR_IN_CHARLOCK(rom)
-                    && (rom->chest_access[j] & 0x88))
-                continue;
-            candidates[n++] = j;
-        }
-        if (!n) {
-            /* never seen; leave the seed as it is rather than break it */
-            printf("Warning: no chest to swap Erdrick's item out of the "
-                    "throne room\n");
-            continue;
-        }
-        j = candidates[mt_rand(0, n - 1)];
-        rom->chests[i].item = rom->chests[j].item;
-        rom->chests[j].item = item;
     }
 }
 
@@ -1745,6 +1697,14 @@ static void progressive_equipment(dw_rom *rom)
     if (!PROGRESSIVE_EQUIPMENT(rom))
         return;
 
+    /* Message $103 must end where the tablet's text ends, and its block
+     * where block 17 starts. Anything else is not the ROM this expects, so
+     * leave the game alone rather than corrupt its text. */
+    if (rom->content[0xb522] != 0xfc || rom->content[0xb68a] != 0xfc) {
+        printf("Warning: unexpected text layout, Progressive Equipment "
+                "skipped\n");
+        return;
+    }
     printf("Making equipment progressive...\n");
     progressive_shops(rom);
     progressive_throne_room(rom);
@@ -1772,7 +1732,6 @@ static void progressive_equipment(dw_rom *rom)
      * block, so the rest of the block ($104-$10f, up to block 17 at $b68b)
      * moves up behind the new, shorter text and the gap is filled with
      * spaces, which are never read. */
-    assert(rom->content[0xb522] == 0xfc && rom->content[0xb68a] == 0xfc);
     memmove(tablet + len, &rom->content[0xb523], 0xb68b - 0xb523);
     memset(tablet + len + (0xb68b - 0xb523), 0x5f, 0xb523 - 0xb34c - len);
     ascii2dw(text);

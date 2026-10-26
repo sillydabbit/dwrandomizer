@@ -7,5 +7,6 @@
 void do_chest_flags(dw_rom *rom);
 void check_quest_items(dw_rom *rom);
 BOOL is_quest_item(uint8_t item);
+void progressive_throne_room(dw_rom *rom);
 
 #endif

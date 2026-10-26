@@ -644,6 +644,61 @@ static void shuffle_chests(dw_rom *rom)
 }
 
 /**
+ * Progressive Equipment: keeps Erdrick's Sword and Armor out of the Tantegel
+ * throne room chests. Those chests do not respawn, and with this flag the
+ * player cannot take either item at the start of the game, so it would be lost
+ * for good. Each one is swapped with an ordinary item from another chest.
+ * Must run after check_quest_items(), which can itself move the armor.
+ *
+ * @param rom The rom struct
+ */
+void progressive_throne_room(dw_rom *rom)
+{
+    size_t i, j, n, candidates[CHEST_COUNT];
+    uint8_t item;
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        item = rom->chests[i].item;
+        if (rom->chests[i].map != TANTEGEL_THRONE_ROOM
+                || (item != SWORD && item != ARMOR))
+            continue;
+
+        /* Only consumables and the like are swapped in. Keys and quest items
+         * would change the access logic already worked out for this seed, and
+         * gold is left alone so a gold chest another option relies on (the
+         * Guaranteed Gold Grind's chest in Tantegel) is never taken. */
+        n = 0;
+        for (j=0; j < CHEST_COUNT; j++) {
+            if (rom->chests[j].map == TANTEGEL_THRONE_ROOM
+                    || is_static_chest(&rom->chests[j]))
+                continue;
+            switch (rom->chests[j].item) {
+                case HERB: case TORCH: case FAIRY_WATER: case WINGS:
+                case DRAGON_SCALE: case RING: case CURSED_BELT:
+                    break;
+                default:
+                    continue;
+            }
+            /* the rule check_quest_items() applies to the armor */
+            if (item == ARMOR && NO_ARMOR_IN_CHARLOCK(rom)
+                    && (rom->chest_access[j] & 0x88))
+                continue;
+            candidates[n++] = j;
+        }
+        if (!n) {
+            /* Never seen: shuffled chests always hold more than a dozen of
+             * these. Leave the seed as it is rather than break it. */
+            printf("Warning: no chest to swap Erdrick's item out of the "
+                    "throne room\n");
+            continue;
+        }
+        j = candidates[mt_rand(0, n - 1)];
+        rom->chests[i].item = rom->chests[j].item;
+        rom->chests[j].item = item;
+    }
+}
+
+/**
  * Applies all chest-related flags
  *
  * @param rom The rom struct

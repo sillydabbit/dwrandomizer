@@ -305,9 +305,10 @@ a8_shop_gate:
 ; the chest stays closed: $e355, which marks a chest opened, is never called.
 a8_sword_gate:
     ldx #6*2
-    .db $2c            ; bit abs: skips the ldx below
+    bne a8_erdrick_gate    ; always taken
 a8_armor_gate:
     ldx #13*2
+a8_erdrick_gate:
     jsr a8_check
     tya
     bmi @refuse

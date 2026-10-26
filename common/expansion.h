@@ -11,8 +11,9 @@ enum hooktype {
 };
 
 enum subroutine {
-  A8_ARMOR_GATE = 0xC984,
+  A8_ARMOR_GATE = 0xC985,
   A8_CHECK = 0xC960,
+  A8_ERDRICK_GATE = 0xC987,
   A8_SHOP_GATE = 0xC96E,
   A8_SWORD_GATE = 0xC981,
   BLOCKED_IN_FRONT = 0xC2D5,
