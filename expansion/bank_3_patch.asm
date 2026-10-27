@@ -282,9 +282,21 @@ a8_check:
     jsr store_and_load_prg_bank
     jmp exp_progressive_check
 
+; X = item * 2. Puts the name of the tier below the item into {F7} and shows
+; msg $103: "Thou must first equip the {F7}." Item 0 of each category (Bamboo
+; Pole, Clothes, Small Shield) is never refused, so the tier below always
+; exists, and it is never an Erdrick's item, so "the" always reads right.
+a8_refusal:
+    txa
+    lsr a              ; item index, carry clear (X is even)
+    adc #$1b-1         ; the tier below's name; names are item + $1b ($d576)
+    jsr $dbf0          ; into {F7}
+    jsr do_dialog_hi
+    .db $03
+    rts
+
 ; Weapon shop. Replaces "lda $bc / sec" at $d589, the start of the gold check,
-; so the tier is checked before the gold. X = item * 2, and the item's name is
-; already in the {F7} buffer ($d579).
+; so the tier is checked before the gold. X = item * 2.
 a8_shop_gate:
     jsr a8_check
     tya
@@ -295,8 +307,7 @@ a8_shop_gate:
 @refuse:
     pla                ; drop the return address: the gold check is skipped
     pla
-    jsr do_dialog_hi
-    .db $03            ; msg $103: "{NAME} is not yet worthy of the {F7}."
+    jsr a8_refusal
     jmp $d664          ; "anything more?", as after "not enough money"
 
 ; Erdrick's Sword ($e29b) and Armor ($e2ee). Each replaces an "already have
@@ -319,12 +330,7 @@ a8_erdrick_gate:
     pla
     lda #0
     sta $0e            ; $ff = "this is a search spot"; $e355 would clear it
-    txa
-    lsr a              ; item index, carry clear (X is even)
-    adc #$1b           ; its name, as the shop does at $d576
-    jsr $dbf0          ; into {F7}
-    jsr do_dialog_hi
-    .db $03            ; msg $103: "{NAME} is not yet worthy of the {F7}."
+    jsr a8_refusal     ; "Thou must first equip the Flame Sword / Magic Armor."
     jmp $cfd9          ; end of command, as finish_text ($d242) does
 
 .if $ > $c9b5

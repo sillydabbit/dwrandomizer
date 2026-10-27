@@ -1689,8 +1689,9 @@ static void progressive_shops(dw_rom *rom)
  */
 static void progressive_equipment(dw_rom *rom)
 {
-    /* F8 = hero's name, F7 = the item's name, FC = end of message */
-    uint8_t text[] = "\xf8 is not yet worthy of the \xf7.\xfc";
+    /* F7 = the name of the tier below the refused item (set by a8_refusal),
+     * FC = end of message */
+    uint8_t text[] = "Thou must first equip the \xf7.\xfc";
     uint8_t *tablet = &rom->content[0xb34c];
     size_t len = sizeof(text) - 1;
 
