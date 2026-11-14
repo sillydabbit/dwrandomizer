@@ -1173,6 +1173,48 @@ static void summer_sale(dw_rom *rom)
 }
 
 /**
+ * Progressive Equipment with Random Weapon Prices: sorts each chain's prices so
+ * every tier costs no more than the one above it. Random prices are drawn per
+ * item over the whole range, so without this the Bamboo Pole, Clothes or Small
+ * Shield - each gating its whole chain - costs over 1,500 gold in about two
+ * seeds of three. The same random prices are kept, only handed out
+ * cheapest-first, and no RNG is used. Runs after Summer Sale, whose per-item
+ * discount could re-order them. Erdrick's Sword and Armor are not sold and
+ * keep their prices.
+ *
+ * Original prices are already in order and Summer Sale alone cannot reorder
+ * them (its discounts differ by at most 1.86x, every step up a chain is at
+ * least 2.5x), so this only matters with Random Weapon Prices.
+ *
+ * @param rom The rom struct
+ */
+static void progressive_prices(dw_rom *rom)
+{
+    /* first and last index of each chain in the 17-entry price table */
+    const size_t chains[3][2] = { {0, 5}, {7, 12}, {14, 16} };
+    size_t c, i, j;
+    uint16_t price, display;
+
+    if (!PROGRESSIVE_EQUIPMENT(rom) || !RANDOM_PRICES(rom))
+        return;
+
+    printf("Sorting equipment prices by tier...\n");
+    for (c=0; c < 3; c++) {
+        /* insertion sort; display prices move with their prices */
+        for (i=chains[c][0] + 1; i <= chains[c][1]; i++) {
+            price = rom->weapon_prices[i];
+            display = rom->weapon_price_display[i];
+            for (j=i; j > chains[c][0] && rom->weapon_prices[j-1] > price; j--) {
+                rom->weapon_prices[j] = rom->weapon_prices[j-1];
+                rom->weapon_price_display[j] = rom->weapon_price_display[j-1];
+            }
+            rom->weapon_prices[j] = price;
+            rom->weapon_price_display[j] = display;
+        }
+    }
+}
+
+/**
  * Modifies the status window to show a death counter
  *
  * @param rom The rom struct
@@ -2269,6 +2311,7 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     treasure_guards(&rom);
     sorted_inventory(&rom);
     summer_sale(&rom);
+    progressive_prices(&rom);    /* after summer_sale(), which can reorder */
     modify_run_rate(&rom);
     dwr_token_dialogue(&rom);
 
