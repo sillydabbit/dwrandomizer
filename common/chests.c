@@ -162,26 +162,114 @@ static int gold_candidate_rank(dw_chest *chest)
     }
 }
 
+static BOOL is_dungeon_tileset(dw_map_index map);
+
+/** Tantegel castle's chest spots, the same eleven move_chests() uses. */
+static const uint8_t tantegel_spots[][2] = {
+    { 1, 13}, { 2, 13}, { 3, 13}, { 1, 14}, { 2, 14}, { 3, 14},
+    { 1, 15}, { 2, 15}, { 3, 15}, {16, 15}, {24, 21},
+};
+
+/**
+ * Ranks a chest elsewhere as the one to move into Tantegel castle when no
+ * castle chest can be made gold. Lower is better: a gold chest outside
+ * Charlock, then a gold chest in Charlock (taking gold out of Charlock is
+ * harmless), then the cheapest junk chest, which is overwritten with gold.
+ *
+ * @param chest The chest to be ranked
+ * @return A rank, or -1 if the chest must stay where it is
+ */
+static int gold_mover_rank(dw_chest *chest)
+{
+    int rank;
+
+    if (chest->map == TANTEGEL || chest->map == TANTEGEL_THRONE_ROOM)
+        return -1;
+    if (is_static_chest(chest) || is_quest_item(chest->item))
+        return -1;
+    if (is_gold_chest(chest->item))
+        return (chest->map == CHARLOCK || chest->map == CHARLOCK_THRONE_ROOM
+                || (chest->map >= CHARLOCK_CAVE_1
+                    && chest->map <= CHARLOCK_CAVE_6)) ? 1 : 0;
+    rank = gold_candidate_rank(chest);
+    return rank < 0 ? -1 : 2 + rank;
+}
+
+/**
+ * Moves a chest from elsewhere into a free Tantegel castle spot and makes sure
+ * it holds gold. The old spot's chest tile is bricked over and the new spot
+ * gets one, as move_chests() does. Moving a gold chest keeps the item pool
+ * exactly as drawn. The first free spot in the list is used, so no RNG is
+ * consumed. Like chest_at(), "free" ignores the map: no two chests anywhere
+ * share coordinates.
+ *
+ * @param rom The rom struct
+ */
+static void add_gold_chest_to_tantegel(dw_rom *rom)
+{
+    size_t i, j, mover = CHEST_COUNT;
+    int rank, best_rank = 99;
+    dw_chest *chest = rom->chests;
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        rank = gold_mover_rank(&chest[i]);
+        if (rank >= 0 && rank < best_rank) {
+            best_rank = rank;
+            mover = i;
+        }
+    }
+    if (mover >= CHEST_COUNT) {
+        printf("  no chest could be moved into Tantegel (should not happen)\n");
+        return;
+    }
+
+    for (i=0; i < sizeof(tantegel_spots) / 2; i++) {
+        for (j=0; j < CHEST_COUNT; j++) {
+            if (chest[j].x == tantegel_spots[i][0]
+                    && chest[j].y == tantegel_spots[i][1])
+                break;
+        }
+        if (j < CHEST_COUNT)
+            continue;   /* taken */
+
+        set_dungeon_tile(rom, chest[mover].map, chest[mover].x, chest[mover].y,
+                is_dungeon_tileset(chest[mover].map) ? DUNGEON_TILE_BRICK
+                                                     : TOWN_TILE_BRICK);
+        chest[mover].map = TANTEGEL;
+        chest[mover].x = tantegel_spots[i][0];
+        chest[mover].y = tantegel_spots[i][1];
+        set_dungeon_tile(rom, TANTEGEL, chest[mover].x, chest[mover].y,
+                TOWN_TILE_CHEST);
+        if (!is_gold_chest(chest[mover].item))
+            chest[mover].item = GOLD;
+        printf("  moved a chest into Tantegel at %d,%d\n",
+                chest[mover].x, chest[mover].y);
+        return;
+    }
+    printf("  no free chest spot in Tantegel (should not happen)\n");
+}
+
 /**
  * Guarantees that Tantegel holds a gold chest, so the gold grind is always
  * available.
  *
  * The grind works because the game only remembers 8 taken chests at a time
  * ($e39a records into $601c-$602b and gives up silently once full), and the
- * list is cleared by going out to the overworld but not by dying. A player who
- * opens 8 chests anywhere and then dies on purpose lands in Tantegel with the
- * list full, so every chest here is unrecorded and can be taken again after
- * each death.
+ * list is emptied by loading the overworld (bank 0 $2f2a) but not by dying. A
+ * player opens chests in one dungeon, dies on purpose, and lands in the throne
+ * room with the list still holding them; the throne room's own chests are back
+ * (the overworld emptied the list since they were first taken) and count too.
+ * Once the list is full, every further chest is unrecorded and refills.
  *
- * It has to be a chest in the castle itself. The throne room is no use as a
- * fallback: those chests are taken at the very start of the game and are gone
- * by the time anyone wants to grind. move_chests() reserves a Tantegel spot
- * when this flag is set, so the castle always has a chest to work with, even
- * with Random Chest Locations on.
+ * It has to be a chest in the castle itself: the throne room's chests are
+ * taken in the first minute and recorded, so gold there is no farm until the
+ * list is already full. move_chests() reserves a Tantegel spot when this flag
+ * is set, so the castle always has a chest, even with Random Chest Locations.
  *
  * Contents are *swapped* with a gold chest elsewhere where possible, which
  * leaves the item pool exactly as the seed drew it and consumes no RNG, so
- * seeds that already qualify are untouched.
+ * seeds that already qualify are untouched. If every castle chest holds a
+ * quest item, a gold chest is moved into the castle instead.
  *
  * @param rom The rom struct
  */
@@ -211,7 +299,10 @@ void guarantee_gold_chest(dw_rom *rom)
         }
     }
     if (candidate >= CHEST_COUNT) {
-        printf("  no chest in Tantegel could be used, leaving the seed alone\n");
+        /* Every castle chest holds a quest item (seen with Random Chest
+         * Locations leaving a single castle chest), so bring a gold chest in
+         * instead. */
+        add_gold_chest_to_tantegel(rom);
         return;
     }
 
