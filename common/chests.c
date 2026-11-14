@@ -257,9 +257,11 @@ static void add_gold_chest_to_tantegel(dw_rom *rom)
  * ($e39a records into $601c-$602b and gives up silently once full), and the
  * list is emptied by loading the overworld (bank 0 $2f2a) but not by dying. A
  * player opens chests in one dungeon, dies on purpose, and lands in the throne
- * room with the list still holding them; the throne room's own chests are back
- * (the overworld emptied the list since they were first taken) and count too.
- * Once the list is full, every further chest is unrecorded and refills.
+ * room with the list still holding them. Entering the throne room (once it has
+ * been left at least once) writes its three chests, (4,4), (5,4) and (6,1),
+ * into list slots 6-8 (bank 0 $2f3c), which is what stops them respawning; so
+ * five chests in slots 1-5 - from the dungeon, plus castle chests opened before
+ * the gold one - fill the list. Every further chest is unrecorded and refills.
  *
  * It has to be a chest in the castle itself: the throne room's chests are
  * taken in the first minute and recorded, so gold there is no farm until the
