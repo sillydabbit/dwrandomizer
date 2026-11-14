@@ -1660,6 +1660,21 @@ static void dwr_speed_hacks(dw_rom *rom)
 
         /* speed up the text */
         vpatch(rom, 0x7a33, 3, 0xea, 0xea, 0xea);
+
+        /*
+         * Searching on a chest prints "... searched the ground all about."
+         * and then loads the chest table into $0320-$039b. Without the
+         * per-letter frame wait, that text is still sitting in the PPU
+         * buffer at $0300, so the table overwrites it: the line stops after
+         * the 10th letter and the 11th becomes the first chest's map number.
+         * Wait one frame so the buffer is flushed before the table loads.
+         * Uses the last 6 bytes of the space freed at $e142.
+         */
+        vpatch(rom, 0xe1dc, 2, 0x84, 0xe1);  /* JMP $e184 instead of $e1fd */
+        vpatch(rom, 0xe184, 6,
+            0x20, 0x74, 0xff,  /* JSR $ff74   ; wait for NMI, flushes text */
+            0x4c, 0xfd, 0xe1   /* JMP $e1fd   ; continue opening the chest */
+        );
     }
 
     if (!SPEED_HACKS(rom))
