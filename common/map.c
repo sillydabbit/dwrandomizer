@@ -650,7 +650,8 @@ static inline void find_largest_lm(int *lm_sizes, int lm_count,
         }
     }
 
-    if (lm_sizes[(*next)-1] < MIN_LM_SIZE) {
+    /* with only one land mass, next is still 0: don't read lm_sizes[-1] */
+    if (!(*next) || lm_sizes[(*next)-1] < MIN_LM_SIZE) {
         *next = *largest;
     }
 }
