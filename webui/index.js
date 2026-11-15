@@ -97,17 +97,35 @@ class Rom extends Uint8Array {
     }
 
     /**
-     * Prompts the user to save the generated ROM file
+     * Prompts the user to save the generated ROM file, and the spoiler log
+     * if the randomizer wrote one.
      */
     save() {
         this.output = FS.readFile('/'+this.outname);
         FS.unlink('/'+this.outname);
-        let url = URL.createObjectURL(new Blob([this.output]), {
+        Rom.download(this.output, this.outname);
+
+        let spoilerName = this.outname.replace(/\.nes$/, '.spoiler.txt');
+        if (FS.analyzePath('/'+spoilerName).exists) {
+            let spoiler = FS.readFile('/'+spoilerName);
+            FS.unlink('/'+spoilerName);
+            Rom.download(spoiler, spoilerName);
+        }
+    }
+
+    /**
+     * Hands a file to the browser as a download
+     *
+     * @param data The file contents
+     * @param name The file name to save as
+     */
+    static download(data, name) {
+        let url = URL.createObjectURL(new Blob([data]), {
             type: 'application/octet-stream'
         });
         let downloader = document.createElement('a');
         downloader.href = url;
-        downloader.download = this.outname;
+        downloader.download = name;
         downloader.click();
         URL.revokeObjectURL(url);
     }
@@ -241,6 +259,9 @@ function setup_ui() {
         'Prevents the screen from flashing when you cast spells.', true);
     ui.addOption   ('Cosmetic',   6, 14, 4, 'Show Death Counter',
         'The stats window will also have a death counter.');
+    ui.addOption   ('Cosmetic',   8, 14, 0, 'Spoiler Log',
+        'Generates a spoiler log for the seed. Changes the checksum and ' +
+        'adds a SPOILERS header to the title screen.');
     ui.addOption   ('Cosmetic',   3, 14, 3, 'Allow Custom Spell Names',
         'Allow spell names to be changed based on the chosen sprite.', true);
     ui.addOption   ('Cosmetic',   5, 14, 2, 'Skip Original Credits',
