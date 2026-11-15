@@ -2308,6 +2308,11 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     permanent_radiant(&rom);
     tablet_cave_torch(&rom);
     rotate_dungeons(&rom);
+    /* Must follow every function that can still rewrite a chest - notably
+     * open_charlock() and no_keys() - or the guarantee can be overwritten
+     * afterwards. Must precede treasure_guards(), so the guards are chosen
+     * from the contents the player will actually find. */
+    guarantee_gold_chest(&rom);
     treasure_guards(&rom);
     sorted_inventory(&rom);
     summer_sale(&rom);

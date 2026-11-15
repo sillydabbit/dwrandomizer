@@ -197,9 +197,11 @@ function setup_ui() {
         'All of the doors are unlocked. Just open them.');
     ui.addTriOption('Shortcuts', 10, 13, 2, "Summer Sale",
         'All weapons and armor 35-65% off!');
-    ui.addTriOption('Shortcuts',  1,  8, 2, 'Cursed Princess',
+    ui.addTriOption('Shortcuts',  1,  6, 0, 'Guaranteed Gold Grind',
+        'Guarantees a Gold Grind can be triggered inside Tantegel Castle.');
+    ui.addTriOption('Shortcuts',  3,  8, 2, 'Cursed Princess',
         'Get Gwaelin to take a Cursed Belt when you return her to win.');
-    ui.addTriOption('Shortcuts',  3,  8, 0, "Three's Company",
+    ui.addTriOption('Shortcuts',  5,  8, 0, "Three's Company",
         'Bring Gwaelin to the Dragonlord and accept his offer to win.');
     // leveling speed
     ui.addDropDown ('Shortcuts',  7, 13, 4, 'Leveling Speed', {

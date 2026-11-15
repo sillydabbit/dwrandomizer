@@ -6,6 +6,7 @@
 #include "mt64.h"
 #include "patch.h"
 #include "dungeon_maps.h"
+#include "map.h"
 
 /**
  * Returns a random index of a chest that is not in charlock.
@@ -117,6 +118,404 @@ void check_quest_items(dw_rom *rom)
             }
         }
     }
+}
+
+/**
+ * Determines whether a chest holds gold.
+ *
+ * The chest byte has five gold values, not one: GOLD (0x12) is the only one the
+ * randomizer writes, but a seed with chest shuffle off keeps vanilla's 0x13-0x16
+ * as well. 0x17 is Erdrick's tablet and is deliberately outside the range.
+ *
+ * @param item The item member of a chest
+ * @return A boolean indicating whether the chest holds gold
+ */
+static inline BOOL is_gold_chest(uint8_t item)
+{
+    return item >= GOLD && item <= 0x16;
+}
+
+/**
+ * Ranks a chest as a candidate to be turned into the guaranteed gold chest.
+ * Lower is better. Quest items are never candidates - moving one is how seeds
+ * become unwinnable - and neither are the static chests.
+ *
+ * @param chest The chest to be ranked
+ * @return A rank, or -1 if the chest must be left alone
+ */
+static int gold_candidate_rank(dw_chest *chest)
+{
+    if (is_static_chest(chest) || is_quest_item(chest->item))
+        return -1;
+
+    switch(chest->item) {
+        case HERB:
+        case TORCH:
+        case FAIRY_WATER:
+        case CURSED_BELT:
+            return 0;   /* junk: the cheapest thing to overwrite */
+        case WINGS:
+        case DRAGON_SCALE:
+        case KEY:
+            return 1;
+        default:
+            return 2;   /* an equipment or key item: a last resort */
+    }
+}
+
+static BOOL is_dungeon_tileset(dw_map_index map);
+
+/** Tantegel castle's chest spots, the same eleven move_chests() uses. */
+static const uint8_t tantegel_spots[][2] = {
+    { 1, 13}, { 2, 13}, { 3, 13}, { 1, 14}, { 2, 14}, { 3, 14},
+    { 1, 15}, { 2, 15}, { 3, 15}, {16, 15}, {24, 21},
+};
+
+/**
+ * Ranks a chest elsewhere as the one to move into Tantegel castle when no
+ * castle chest can be made gold. Lower is better: a gold chest outside
+ * Charlock, then a gold chest in Charlock (taking gold out of Charlock is
+ * harmless), then the cheapest junk chest, which is overwritten with gold.
+ *
+ * @param chest The chest to be ranked
+ * @return A rank, or -1 if the chest must stay where it is
+ */
+static int gold_mover_rank(dw_chest *chest)
+{
+    int rank;
+
+    if (chest->map == TANTEGEL || chest->map == TANTEGEL_THRONE_ROOM)
+        return -1;
+    if (is_static_chest(chest) || is_quest_item(chest->item))
+        return -1;
+    if (is_gold_chest(chest->item))
+        return (chest->map == CHARLOCK || chest->map == CHARLOCK_THRONE_ROOM
+                || (chest->map >= CHARLOCK_CAVE_1
+                    && chest->map <= CHARLOCK_CAVE_6)) ? 1 : 0;
+    rank = gold_candidate_rank(chest);
+    return rank < 0 ? -1 : 2 + rank;
+}
+
+/**
+ * Moves a chest from elsewhere into a free Tantegel castle spot and makes sure
+ * it holds gold. The old spot's chest tile is bricked over and the new spot
+ * gets one, as move_chests() does. Moving a gold chest keeps the item pool
+ * exactly as drawn. The first free spot in the list is used, so no RNG is
+ * consumed. Like chest_at(), "free" ignores the map: no two chests anywhere
+ * share coordinates.
+ *
+ * @param rom The rom struct
+ */
+static BOOL move_chest_into_tantegel(dw_rom *rom, size_t mover, BOOL make_gold);
+
+static void add_gold_chest_to_tantegel(dw_rom *rom)
+{
+    size_t i, mover = CHEST_COUNT;
+    int rank, best_rank = 99;
+    dw_chest *chest = rom->chests;
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        rank = gold_mover_rank(&chest[i]);
+        if (rank >= 0 && rank < best_rank) {
+            best_rank = rank;
+            mover = i;
+        }
+    }
+    if (mover >= CHEST_COUNT) {
+        printf("  no chest could be moved into Tantegel (should not happen)\n");
+        return;
+    }
+    move_chest_into_tantegel(rom, mover, TRUE);
+}
+
+/**
+ * Moves one chest into the first free Tantegel castle spot, bricking over its
+ * old spot and drawing the new chest tile, as move_chests() does. No RNG.
+ *
+ * @param rom The rom struct
+ * @param mover The index of the chest to move
+ * @param make_gold Whether to turn a chest that is not gold into gold
+ * @return TRUE if a free spot was found and the chest moved
+ */
+static BOOL move_chest_into_tantegel(dw_rom *rom, size_t mover, BOOL make_gold)
+{
+    size_t i, j;
+    dw_chest *chest = rom->chests;
+
+    for (i=0; i < sizeof(tantegel_spots) / 2; i++) {
+        for (j=0; j < CHEST_COUNT; j++) {
+            if (chest[j].x == tantegel_spots[i][0]
+                    && chest[j].y == tantegel_spots[i][1])
+                break;
+        }
+        if (j < CHEST_COUNT)
+            continue;   /* taken */
+
+        set_dungeon_tile(rom, chest[mover].map, chest[mover].x, chest[mover].y,
+                is_dungeon_tileset(chest[mover].map) ? DUNGEON_TILE_BRICK
+                                                     : TOWN_TILE_BRICK);
+        chest[mover].map = TANTEGEL;
+        chest[mover].x = tantegel_spots[i][0];
+        chest[mover].y = tantegel_spots[i][1];
+        set_dungeon_tile(rom, TANTEGEL, chest[mover].x, chest[mover].y,
+                TOWN_TILE_CHEST);
+        if (make_gold && !is_gold_chest(chest[mover].item))
+            chest[mover].item = GOLD;
+        printf("  moved a chest into Tantegel at %d,%d\n",
+                chest[mover].x, chest[mover].y);
+        return TRUE;
+    }
+    printf("  no free chest spot in Tantegel\n");
+    return FALSE;
+}
+
+/* The warps that are real stairs and doors; the table's entries past these
+ * are other data (see dwr-map's WARP_COUNT). */
+#define GRIND_WARP_COUNT 51
+
+static uint8_t grind_find(uint8_t *parent, uint8_t m)
+{
+    while (parent[m] != m)
+        m = parent[m] = parent[parent[m]];
+    return m;
+}
+
+/** Whether a map is part of Charlock: the castle, its throne room or a cave. */
+static inline BOOL is_charlock_map(uint8_t map)
+{
+    return map == CHARLOCK || map == CHARLOCK_THRONE_ROOM
+            || (map >= CHARLOCK_CAVE_1 && map <= CHARLOCK_CAVE_6);
+}
+
+/**
+ * Whether a chest's item can count towards starting the grind. Erdrick's
+ * Sword and Armor never do: with Progressive Equipment they are refused until
+ * late, and leaving them out costs nothing when they can be opened.
+ */
+static inline BOOL grind_item(dw_chest *chest)
+{
+    return chest->item != SWORD && chest->item != ARMOR;
+}
+
+/**
+ * Whether a chest counts towards starting the grind. Chests on a Charlock map
+ * never do, whatever Open Charlock or Stair Shuffle make of the route (user,
+ * 2026-11-14: the grind must never need a Charlock chest opened).
+ */
+static inline BOOL grind_counts(dw_chest *chest)
+{
+    return grind_item(chest) && !is_charlock_map(chest->map);
+}
+
+/**
+ * Checks whether the gold grind can be started before Charlock. Maps joined
+ * by warps that do not touch the overworld form a group: one trip, no
+ * overworld load in between. The throne room's group T is always the end of
+ * the trip (the death warp lands there). The grind starts if some group C
+ * other than Charlock's own has chests(C) + chests(T) - 1 >= 8, or chests(T)
+ * - 1 >= 8 when C is T (the -1 is the gold chest, which must come after the
+ * list is full). Chests on Charlock maps are never counted, and a group is
+ * Charlock's own when its only way in from the overworld is Charlock's
+ * entrance - with or without Open Charlock: the grind must never need
+ * Charlock.
+ *
+ * @param rom The rom struct
+ * @param charlock_only Set per map: TRUE if it is in a Charlock-only group
+ * @return TRUE if the grind can be started before Charlock
+ */
+static BOOL early_grind_possible(dw_rom *rom, BOOL *charlock_only)
+{
+    uint8_t parent[ERDRICKS_CAVE_2 + 1], a, b, g, t_group;
+    int count[ERDRICKS_CAVE_2 + 1] = {0}, other_entry[ERDRICKS_CAVE_2 + 1] = {0};
+    int t;
+    size_t i;
+    dw_warp *from = rom->map.warps_from, *to = rom->map.warps_to;
+    BOOL ok = FALSE;
+
+    for (i=0; i <= ERDRICKS_CAVE_2; i++)
+        parent[i] = (uint8_t)i;
+    for (i=0; i < GRIND_WARP_COUNT; i++) {
+        a = from[i].map;
+        b = to[i].map;
+        if (a > ERDRICKS_CAVE_2 || b > ERDRICKS_CAVE_2)
+            continue;
+        if (a == NO_MAP || b == NO_MAP || a == OVERWORLD || b == OVERWORLD)
+            continue;
+        parent[grind_find(parent, a)] = grind_find(parent, b);
+    }
+    for (i=0; i < GRIND_WARP_COUNT; i++) {
+        a = from[i].map;
+        b = to[i].map;
+        if (a > ERDRICKS_CAVE_2 || b > ERDRICKS_CAVE_2)
+            continue;
+        if (i == WARP_CHARLOCK)
+            continue;
+        if (a == OVERWORLD && b > OVERWORLD)
+            other_entry[grind_find(parent, b)] = 1;
+        else if (b == OVERWORLD && a > OVERWORLD)
+            other_entry[grind_find(parent, a)] = 1;
+    }
+    for (i=0; i < CHEST_COUNT; i++) {
+        if (rom->chests[i].map <= ERDRICKS_CAVE_2
+                && grind_counts(&rom->chests[i]))
+            count[grind_find(parent, rom->chests[i].map)]++;
+    }
+    t_group = grind_find(parent, TANTEGEL_THRONE_ROOM);
+    t = count[t_group];
+    for (i=0; i <= ERDRICKS_CAVE_2; i++) {
+        g = grind_find(parent, (uint8_t)i);
+        charlock_only[i] = !other_entry[g] && g != t_group;
+        if (g != i || charlock_only[i] || !count[g])
+            continue;
+        if ((g == t_group && t - 1 >= 8) || (g != t_group && count[g] + t - 1 >= 8))
+            ok = TRUE;
+    }
+    return ok;
+}
+
+/**
+ * Makes sure the gold grind can be started before Charlock (user, 2026-11-14:
+ * the point of a grind is to use it before Charlock). Random Chest Locations
+ * can leave every group short except Charlock's, about 1 seed in 100. Each
+ * chest moved out of Charlock (or a group reached only through it) into the
+ * castle adds one to the throne room's group, which helps every trip, so this
+ * moves them one at a time until a trip works: gold first, then junk, never
+ * quest items, static chests or Erdrick's items, and contents are left as they
+ * are. No RNG, and a seed that already qualifies is untouched.
+ *
+ * @param rom The rom struct
+ */
+static void guarantee_early_grind(dw_rom *rom)
+{
+    BOOL charlock_only[ERDRICKS_CAVE_2 + 1];
+    size_t i, mover;
+    int rank, best_rank;
+    dw_chest *chest = rom->chests;
+
+    while (!early_grind_possible(rom, charlock_only)) {
+        mover = CHEST_COUNT;
+        best_rank = 99;
+        for (i=0; i < CHEST_COUNT; i++) {
+            if (chest[i].map > ERDRICKS_CAVE_2)
+                continue;
+            if (!charlock_only[chest[i].map] && !is_charlock_map(chest[i].map))
+                continue;
+            if (!grind_item(&chest[i]))
+                continue;
+            rank = gold_mover_rank(&chest[i]);
+            if (rank >= 0 && rank < best_rank) {
+                best_rank = rank;
+                mover = i;
+            }
+        }
+        if (mover >= CHEST_COUNT) {
+            printf("  no Charlock chest could be moved to start the grind earlier\n");
+            return;
+        }
+        printf("  making the grind possible before Charlock:\n");
+        if (!move_chest_into_tantegel(rom, mover, FALSE))
+            return;
+    }
+}
+
+/**
+ * Guarantees that Tantegel holds a gold chest, so the gold grind is always
+ * available.
+ *
+ * The grind works because the game only remembers 8 taken chests at a time
+ * ($e39a records into $601c-$602b and gives up silently once full), and the
+ * list is emptied by loading the overworld (bank 0 $2f2a) but not by dying. A
+ * player opens chests in one dungeon, dies on purpose, and lands in the throne
+ * room with the list still holding them. Entering the throne room (once it has
+ * been left at least once) writes its three chests, (4,4), (5,4) and (6,1),
+ * into list slots 6-8 (bank 0 $2f3c), which is what stops them respawning; so
+ * five chests in slots 1-5 - from the dungeon, plus castle chests opened before
+ * the gold one - fill the list. Every further chest is unrecorded and refills.
+ *
+ * It has to be a chest in the castle itself: the throne room's chests are
+ * taken in the first minute and recorded, so gold there is no farm until the
+ * list is already full. move_chests() reserves a Tantegel spot when this flag
+ * is set, so the castle always has a chest, even with Random Chest Locations.
+ *
+ * Contents are *swapped* with a gold chest elsewhere where possible, which
+ * leaves the item pool exactly as the seed drew it and consumes no RNG, so
+ * seeds that already qualify are untouched. If every castle chest holds a
+ * quest item, a gold chest is moved into the castle instead.
+ *
+ * @param rom The rom struct
+ */
+static void castle_gold_chest(dw_rom *rom)
+{
+    size_t i, candidate = CHEST_COUNT, donor = CHEST_COUNT;
+    int rank, best_rank = 99;
+    dw_chest *chest = rom->chests;
+    uint8_t tmp;
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        if (chest[i].map != TANTEGEL)
+            continue;
+        if (is_gold_chest(chest[i].item))
+            return;  /* nothing to do */
+        rank = gold_candidate_rank(&chest[i]);
+        if (rank < 0)
+            continue;
+        if (rank < best_rank) {
+            best_rank = rank;
+            candidate = i;
+        }
+    }
+    if (candidate >= CHEST_COUNT) {
+        /* Every castle chest holds a quest item (seen with Random Chest
+         * Locations leaving a single castle chest), so bring a gold chest in
+         * instead. */
+        add_gold_chest_to_tantegel(rom);
+        return;
+    }
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        if (i == candidate || !is_gold_chest(chest[i].item))
+            continue;
+        if (is_static_chest(&chest[i]))
+            continue;
+        /* not the throne room either: those chests are opened in the first
+         * minute of the game, so swapping a key item into one would simply
+         * hand it to the player at the start */
+        if (chest[i].map == TANTEGEL_THRONE_ROOM)
+            continue;
+        /* never swap into Charlock: a key item moved in there can make the seed
+         * unwinnable, which is what check_quest_items() exists to prevent */
+        if (chest[i].map == CHARLOCK || chest[i].map == CHARLOCK_THRONE_ROOM
+                || (chest[i].map >= CHARLOCK_CAVE_1
+                    && chest[i].map <= CHARLOCK_CAVE_6))
+            continue;
+        donor = i;
+        break;
+    }
+
+    if (donor < CHEST_COUNT) {
+        tmp = chest[candidate].item;
+        chest[candidate].item = chest[donor].item;
+        chest[donor].item = tmp;
+    } else {
+        chest[candidate].item = GOLD;
+    }
+}
+
+/**
+ * Guarantees a gold chest in Tantegel castle that can be farmed before
+ * Charlock: first the chest itself (castle_gold_chest()), then enough chests
+ * on one trip to fill the opened-chest list (guarantee_early_grind()).
+ *
+ * @param rom The rom struct
+ */
+void guarantee_gold_chest(dw_rom *rom)
+{
+    if (!GUARANTEED_GOLD(rom))
+        return;
+
+    printf("Guaranteeing a gold chest in Tantegel...\n");
+    castle_gold_chest(rom);
+    guarantee_early_grind(rom);
 }
 
 /**
@@ -393,9 +792,10 @@ static dw_chest *chest_at(dw_rom *rom, uint8_t x, uint8_t y, size_t until) {
  */
 static void move_chests(dw_rom *rom)
 {
-    size_t i, j;
+    size_t i, j, k;
     int bin, map;
     uint8_t *chest_spot, *new_door;
+    uint8_t tantegel_spot[3];
     uint8_t chest_bins[4] = { 3, 0, 0, 0};
     uint8_t chest_spots[][3] = {
 //         {TANTEGEL_THRONE_ROOM,  4,  4}, /* vanilla */
@@ -523,6 +923,29 @@ static void move_chests(dw_rom *rom)
     printf("Adding back chests...\n");
 chest_placement_retry:
     mt_shuffle(chest_spots, sizeof(chest_spots) / 3, 3);
+    /* Guaranteed Gold needs a chest that is still in Tantegel castle once the
+     * throne room's have been taken at the start of the game, and a shuffle can
+     * otherwise leave the castle with none at all. Move a Tantegel spot to the
+     * front so the first chest placed lands there. Swapping two entries of an
+     * already shuffled list consumes no RNG, so the rest of the placement is
+     * exactly what the seed would have produced anyway. */
+    if (GUARANTEED_GOLD(rom)) {
+        for (k=0; k < sizeof(chest_spots) / 3; k++) {
+            if (chest_spots[k][0] != TANTEGEL)
+                continue;
+            /* The spot also has to survive the loop's own occupancy test, which
+             * compares coordinates without regard to the map (chest_at). Five
+             * of the Tantegel spots are vanilla chest coordinates, so a spot
+             * reserved blindly is skipped for the same reason a taken one is,
+             * and the reservation quietly does nothing. */
+            if (chest_at(rom, chest_spots[k][1], chest_spots[k][2], 3))
+                continue;
+            memcpy(tantegel_spot, chest_spots[0], 3);
+            memcpy(chest_spots[0], chest_spots[k], 3);
+            memcpy(chest_spots[k], tantegel_spot, 3);
+            break;
+        }
+    }
     for (i=0, j=0; i < CHEST_COUNT; i++, j++) {
         map = rom->chests[i].map;
          /* don't mess with these */
