@@ -25,7 +25,7 @@
  * digits, space and . - ! only; an even length centres exactly.
  */
 #define DABBIT_VERSION "1.0.0"
-#define VERSION "DABBIT FORK V" DABBIT_VERSION
+#define VERSION "DABBIT EDITION " DABBIT_VERSION
 
 #define DEFAULT_FLAGS "IVIAAVCAKACAAAAAAAAAAEAA"
 #define CHEST_COUNT 31
