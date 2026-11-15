@@ -1580,6 +1580,80 @@ static BOOL should_be_guarded(dw_chest_content item)
 }
 
 /**
+ * Finishes every NPC's step before a battle freezes them.
+ *
+ * A guarded chest in a town starts a battle while NPCs are walking, which the
+ * game never does on its own. Each NPC is a tile position plus a pixel offset,
+ * and a step changes the tile at its start (up, left) or its end (right,
+ * down), so the two only agree once a step completes. start_combat freezes
+ * the NPCs by setting bit 7 of $8d at $e576, and the end of the battle clears
+ * $8d without finishing anyone's step, so an NPC caught mid-step is drawn out
+ * of place and turns mid-step from then on.
+ *
+ * This replaces that "lda $8d / ora #$80 / sta $8d" with a call to a routine
+ * that first settles every NPC in place - offset cleared, the tile change of a
+ * right or down step applied, "moving" cleared, as a map load leaves them -
+ * and then does the same three instructions. Settling at the freeze itself
+ * matters: frames still pass between finding the guard and the battle, and
+ * NPCs keep walking through them. Maps without NPCs ($8d is $ff) are skipped.
+ * Uses $c900-$c94d, in the free space at $c7ec-$c9b5.
+ *
+ * @param rom The rom struct
+ */
+static void settle_npcs_for_battle(dw_rom *rom)
+{
+    vpatch(rom, 0xc900, 78,
+        0xa5, 0x8d,        /*      lda $8d                                   */
+        0xc9, 0xff,        /*      cmp #$ff        ; no NPCs on this map     */
+        0xf0, 0x41,        /*      beq @freeze                               */
+        0x8a,              /*      txa             ; keep X for the caller   */
+        0x48,              /*      pha                                       */
+        0xa2, 0x00,        /*      ldx #$00                                  */
+        0xb5, 0x52,        /* @npc: lda $52,x      ; moving/direction/y      */
+        0x10, 0x30,        /*      bpl @next       ; not moving              */
+        0x29, 0x60,        /*      and #$60                                  */
+        0xf0, 0x20,        /*      beq @y_off      ; up: y already changed   */
+        0xc9, 0x40,        /*      cmp #$40                                  */
+        0xf0, 0x14,        /*      beq @down                                 */
+        0xc9, 0x60,        /*      cmp #$60                                  */
+        0xf0, 0x08,        /*      beq @x_off      ; left: x already changed */
+        0xb5, 0x53,        /*      lda $53,x       ; right: x changes when   */
+        0x29, 0xf0,        /*      and #$f0        ; the offset wraps to 0   */
+        0xf0, 0x02,        /*      beq @x_off                                */
+        0xf6, 0x51,        /*      inc $51,x                                 */
+        0xb5, 0x53,        /* @x_off: lda $53,x                              */
+        0x29, 0x0f,        /*      and #$0f                                  */
+        0x95, 0x53,        /*      sta $53,x                                 */
+        0x10, 0x0e,        /*      bpl @stop       ; always                  */
+        0xb5, 0x53,        /* @down: lda $53,x     ; down: y changes when    */
+        0x29, 0x0f,        /*      and #$0f        ; the offset wraps to 0   */
+        0xf0, 0x02,        /*      beq @y_off                                */
+        0xf6, 0x52,        /*      inc $52,x                                 */
+        0xb5, 0x53,        /* @y_off: lda $53,x                              */
+        0x29, 0xf0,        /*      and #$f0                                  */
+        0x95, 0x53,        /*      sta $53,x                                 */
+        0xb5, 0x52,        /* @stop: lda $52,x                               */
+        0x29, 0x7f,        /*      and #$7f        ; clear "moving"          */
+        0x95, 0x52,        /*      sta $52,x                                 */
+        0xe8,              /* @next: inx           ; 3 bytes per NPC         */
+        0xe8,              /*      inx                                       */
+        0xe8,              /*      inx                                       */
+        0xe0, 0x3c,        /*      cpx #$3c        ; 20 NPCs                 */
+        0xd0, 0xc5,        /*      bne @npc                                  */
+        0x68,              /*      pla                                       */
+        0xaa,              /*      tax                                       */
+        0xa5, 0x8d,        /* @freeze: lda $8d     ; the code replaced at    */
+        0x09, 0x80,        /*      ora #$80        ; $e576, so A and the     */
+        0x85, 0x8d,        /*      sta $8d         ; flags come back as      */
+        0x60               /*      rts             ; before                  */
+    );
+    vpatch(rom, 0xe576, 6,
+        0x20, 0x00, 0xc9,  /* jsr $c900 */
+        0xea, 0xea, 0xea   /* nop x3    */
+    );
+}
+
+/**
  * Adds "spike" tiles to chests and search locations that should be guarded
  *
  * @param rom The rom struct
@@ -1595,6 +1669,7 @@ static void treasure_guards(dw_rom *rom)
         return;
 
     printf("Adding important treasure guards...\n");
+    settle_npcs_for_battle(rom);
 
     for (i=0; i < 2; i++){
         if (should_be_guarded(search->item[i])) {
