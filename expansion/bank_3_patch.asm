@@ -581,6 +581,84 @@ a7_call:               ; Y = 0 lookup, 1 won, 2 NPC settle. The same bank switch
 .if $ > $c960
     .error "Oops All Treasure Guards has overrun $c960, where Progressive Equipment starts"
 .endif
+
+; *** Progressive Equipment (A8) ***
+; Pinned to the end of this window so it stays clear of Oops All Treasure Guards,
+; which fills it from $c818 up. The tier logic itself is in exp_bank_3.asm; this
+; is only the glue that has to be in the fixed bank. Hooked by
+; progressive_equipment() in dwr.c, and only when the flag is on.
+.org $c960
+
+; X = shop item index * 2 (0-16; 6 and 13 are Erdrick's Sword and Armor).
+; Returns Y = worn tier - required tier, signed: negative = not allowed yet,
+; 0 = wearing the tier just below, 1 = wearing that tier or better. X is kept.
+; Does its own bank switch rather than take a slot in the $c288 dispatch table:
+; a new slot would move every routine after the table, and upstream hooks into
+; them are written before the checksum, so seeds without A8 would change.
+; exp_progressive_check ends with exp_load_last_bank, which switches back and
+; returns to our caller.
+a8_check:
+    lda $6004          ; the bank in use, for exp_load_last_bank
+    sta $7004
+    lda #3
+    jsr store_and_load_prg_bank
+    jmp exp_progressive_check
+
+; X = item * 2. Puts the name of the tier below the item into {F7} and shows
+; msg $103: "Thou must first equip the {F7}." Item 0 of each category (Bamboo
+; Pole, Clothes, Small Shield) is never refused, so the tier below always
+; exists, and it is never an Erdrick's item, so "the" always reads right.
+a8_refusal:
+    txa
+    lsr a              ; item index, carry clear (X is even)
+    adc #$1b-1         ; the tier below's name; names are item + $1b ($d576)
+    jsr $dbf0          ; into {F7}
+    jsr do_dialog_hi
+    .db $03
+    rts
+
+; Weapon shop. Replaces "lda $bc / sec" at $d589, the start of the gold check,
+; so the tier is checked before the gold. X = item * 2.
+a8_shop_gate:
+    jsr a8_check
+    tya
+    bmi @refuse
+    lda $bc            ; the two instructions this hook replaced
+    sec
+    rts
+@refuse:
+    pla                ; drop the return address: the gold check is skipped
+    pla
+    jsr a8_refusal
+    jmp $d664          ; "anything more?", as after "not enough money"
+
+; Erdrick's Sword ($e29b) and Armor ($e2ee). Each replaces an "already have
+; it?" compare, and returns Z set = already have it (the original empty path),
+; Z clear = take it. If the tier below is not worn yet, the item is refused and
+; the chest stays closed: $e355, which marks a chest opened, is never called.
+a8_sword_gate:
+    ldx #6*2
+    bne a8_erdrick_gate    ; always taken
+a8_armor_gate:
+    ldx #13*2
+a8_erdrick_gate:
+    jsr a8_check
+    tya
+    bmi @refuse
+    cpy #1             ; 1 = already wearing it
+    rts
+@refuse:
+    pla                ; leave the TAKE command
+    pla
+    lda #0
+    sta $0e            ; $ff = "this is a search spot"; $e355 would clear it
+    jsr a8_refusal     ; "Thou must first equip the Flame Sword / Magic Armor."
+    jmp $cfd9          ; end of command, as finish_text ($d242) does
+
+.if $ > $c9b5
+    .error "A8 has overrun the $c7ec-$c9b5 window"
+.endif
+
 .org $c9b5
 
 .org $f232

@@ -87,7 +87,7 @@
 #define PERMANENT_RADIANT(x)      (x->flags[ 2] & 0x03)
 #define GUARANTEED_GOLD(x)        (x->flags[ 6] & 0x03)
 #define OOPS_ALL_TREASURE_GUARDS(x) (x->flags[ 8] & 0x30)
-#define UNUSED_110C               (x->flags[11] & 0x0c)
+#define PROGRESSIVE_EQUIPMENT(x)  (x->flags[11] & 0x0c)
 #define UNUSED_1103               (x->flags[11] & 0x03)
 #define UNUSED_1402               (x->flags[14] & 0x02)
 #define UNUSED_1401               (x->flags[14] & 0x01)

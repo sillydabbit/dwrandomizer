@@ -1250,6 +1250,48 @@ static void summer_sale(dw_rom *rom)
 }
 
 /**
+ * Progressive Equipment with Random Weapon Prices: sorts each chain's prices so
+ * every tier costs no more than the one above it. Random prices are drawn per
+ * item over the whole range, so without this the Bamboo Pole, Clothes or Small
+ * Shield - each gating its whole chain - costs over 1,500 gold in about two
+ * seeds of three. The same random prices are kept, only handed out
+ * cheapest-first, and no RNG is used. Runs after Summer Sale, whose per-item
+ * discount could re-order them. Erdrick's Sword and Armor are not sold and
+ * keep their prices.
+ *
+ * Original prices are already in order and Summer Sale alone cannot reorder
+ * them (its discounts differ by at most 1.86x, every step up a chain is at
+ * least 2.5x), so this only matters with Random Weapon Prices.
+ *
+ * @param rom The rom struct
+ */
+static void progressive_prices(dw_rom *rom)
+{
+    /* first and last index of each chain in the 17-entry price table */
+    const size_t chains[3][2] = { {0, 5}, {7, 12}, {14, 16} };
+    size_t c, i, j;
+    uint16_t price, display;
+
+    if (!PROGRESSIVE_EQUIPMENT(rom) || !RANDOM_PRICES(rom))
+        return;
+
+    printf("Sorting equipment prices by tier...\n");
+    for (c=0; c < 3; c++) {
+        /* insertion sort; display prices move with their prices */
+        for (i=chains[c][0] + 1; i <= chains[c][1]; i++) {
+            price = rom->weapon_prices[i];
+            display = rom->weapon_price_display[i];
+            for (j=i; j > chains[c][0] && rom->weapon_prices[j-1] > price; j--) {
+                rom->weapon_prices[j] = rom->weapon_prices[j-1];
+                rom->weapon_price_display[j] = rom->weapon_price_display[j-1];
+            }
+            rom->weapon_prices[j] = price;
+            rom->weapon_price_display[j] = display;
+        }
+    }
+}
+
+/**
  * Modifies the status window to show a death counter
  *
  * @param rom The rom struct
@@ -1708,6 +1750,123 @@ static BOOL should_be_guarded(dw_chest_content item)
         default:
             return FALSE;
     }
+}
+
+/**
+ * Progressive Equipment: makes sure every weapon, armor and shield is sold in
+ * at least one weapon shop. randomize_shops() draws its 36 slots from the 15
+ * pieces with replacement, so pieces can go missing; each missing piece takes
+ * over a random slot whose piece is sold in more than one place. With shops
+ * not randomized, the vanilla shops already sell every piece and nothing
+ * changes.
+ *
+ * @param rom The rom struct
+ */
+static void progressive_shops(dw_rom *rom)
+{
+    uint8_t *slot, *shop_start, *candidates[36], *pick;
+    size_t count[SHOP_END] = { 0 }, n;
+    int shop, missing;
+
+    /* count every piece across the 7 weapon shops */
+    for (slot = rom->weapon_shops, shop = 0; shop < 7; slot++) {
+        if (*slot == SHOP_END)
+            shop++;
+        else
+            count[*slot]++;
+    }
+
+    for (missing = BAMBOO_POLE; missing <= SILVER_SHIELD; missing++) {
+        if (missing == ERDRICKS_SWORD || missing == ERDRICKS_ARMOR
+                || count[missing])
+            continue;
+
+        /* any slot holding a duplicated piece will do: no shop sells the
+         * missing piece, so it cannot end up twice in one shop */
+        n = 0;
+        for (slot = rom->weapon_shops, shop = 0; shop < 7; slot++) {
+            if (*slot == SHOP_END)
+                shop++;
+            else if (count[*slot] > 1)
+                candidates[n++] = slot;
+        }
+        /* cannot happen: 36 slots and at most 14 different pieces */
+        if (!n) {
+            printf("Warning: no shop slot free for a missing piece\n");
+            return;
+        }
+        pick = candidates[mt_rand(0, n - 1)];
+        count[*pick]--;
+        count[missing]++;
+        *pick = missing;
+
+        /* keep the shop sorted, as randomize_shops() leaves it */
+        for (shop_start = pick; shop_start > rom->weapon_shops
+                && shop_start[-1] != SHOP_END; shop_start--) {}
+        for (slot = pick; *slot != SHOP_END; slot++) {}
+        qsort(shop_start, slot - shop_start, sizeof(uint8_t), &compare);
+    }
+}
+
+/**
+ * Progressive Equipment: a weapon, armor or shield can only be bought while
+ * wearing the tier below it (or better), and Erdrick's Sword and Armor can
+ * only be taken while wearing the Flame Sword / Magic Armor (or the item
+ * itself, which is the game's usual "already have it" case). The tier logic is
+ * in exp_bank_3.asm and the glue in bank_3_patch.asm ($c960).
+ *
+ * @param rom The rom struct
+ */
+static void progressive_equipment(dw_rom *rom)
+{
+    /* F7 = the name of the tier below the refused item (set by a8_refusal),
+     * FC = end of message */
+    uint8_t text[] = "Thou must first equip the \xf7.\xfc";
+    uint8_t *tablet = &rom->content[0xb34c];
+    size_t len = sizeof(text) - 1;
+
+    if (!PROGRESSIVE_EQUIPMENT(rom))
+        return;
+
+    /* Message $103 must end where the tablet's text ends, and its block
+     * where block 17 starts. Anything else is not the ROM this expects, so
+     * leave the game alone rather than corrupt its text. */
+    if (rom->content[0xb522] != 0xfc || rom->content[0xb68a] != 0xfc) {
+        printf("Warning: unexpected text layout, Progressive Equipment "
+                "skipped\n");
+        return;
+    }
+    printf("Making equipment progressive...\n");
+    progressive_shops(rom);
+    progressive_throne_room(rom);
+
+    /* weapon shop: check the tier before the gold ("lda $bc / sec") */
+    add_hook(rom, JSR, 0xd589, A8_SHOP_GATE);
+
+    /* Erdrick's Sword: "lda $be / and #$e0 / cmp #$e0 / bne $e2a6". $e2a3
+     * stays put: five other items branch to it. */
+    add_hook(rom, JSR, 0xe29b, A8_SWORD_GATE);
+    vpatch(rom, 0xe29e, 5,
+        0xd0, 0x06,        /* bne $e2a6 ; take it                          */
+        0xea, 0xea, 0xea); /* nop x3    ; already have it -> $e2a3         */
+
+    /* Erdrick's Armor, in the TAKE code rewrite_search_take_code() wrote:
+     * "lda $be / and #$1c / cmp #$1c / beq $e345" */
+    add_hook(rom, JSR, 0xe2ee, A8_ARMOR_GATE);
+    vpatch(rom, 0xe2f1, 5,
+        0xf0, 0x52,        /* beq $e345 ; already have it                  */
+        0xea, 0xea, 0xea); /* nop x3    ; take it -> $e2f6                 */
+
+    /* The refusal reuses message $103, the tablet's text, which nothing in
+     * the randomizer can show any more (the tablet is gone). Messages are
+     * found by counting terminators from the start of their 16-message
+     * block, so the rest of the block ($104-$10f, up to block 17 at $b68b)
+     * moves up behind the new, shorter text and the gap is filled with
+     * spaces, which are never read. */
+    memmove(tablet + len, &rom->content[0xb523], 0xb68b - 0xb523);
+    memset(tablet + len + (0xb68b - 0xb523), 0x5f, 0xb523 - 0xb34c - len);
+    ascii2dw(text);
+    memcpy(tablet, text, len);
 }
 
 /**
@@ -2385,6 +2544,7 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     randomize_zone_layout(&rom);
     randomize_zones(&rom);
     randomize_shops(&rom);
+    progressive_equipment(&rom);
     randomize_growth(&rom);
     randomize_spells(&rom);
     update_drops(&rom);
@@ -2417,6 +2577,7 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     oops_all_treasure_guards(&rom);
     sorted_inventory(&rom);
     summer_sale(&rom);
+    progressive_prices(&rom);    /* after summer_sale(), which can reorder */
     modify_run_rate(&rom);
     dwr_token_dialogue(&rom);
 

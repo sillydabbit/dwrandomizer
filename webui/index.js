@@ -237,6 +237,9 @@ function setup_ui() {
         "Prevent Erdrick's Armor from being in a chest in Charlock Castle.");
     ui.addTriOption('Challenge',  9, 10, 6, "Easy Charlock",
         "Make it slightly easier to run from high level monsters.");
+    ui.addTriOption('Challenge',  8, 11, 2, "Progressive Equipment",
+        "Equipment must be acquired in order. Erdrick's gear will never " +
+        "appear in the Throne Room.");
 
     ui.addTriOption('Cosmetic',  4, 11, 6, 'Modern Spell Names',
         'Use spell names from more recent DQ releases.');
