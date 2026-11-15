@@ -1952,6 +1952,9 @@ static void treasure_guards(dw_rom *rom)
  *   - the Staff of Rain chest. The old man takes the Silver Harp before it can
  *     be opened, so dying to its guard would force the harp to be found again
  *   - any tile that already has a forced encounter
+ *   - a chest or search spot that holds nothing: a guard only ever guards a
+ *     treasure. An empty overworld search spot would otherwise put a fight on
+ *     a tile the game no longer hints at
  *
  * @param rom The rom struct
  */
@@ -1973,15 +1976,18 @@ static void oops_all_treasure_guards(dw_rom *rom)
         spike->map[i] = NO_MAP;
 
     for (i=0; i < CHEST_COUNT; i++) {
-        if (chest[i].map == TANTEGEL_THRONE_ROOM || chest[i].item == STAFF)
+        if (chest[i].map == TANTEGEL_THRONE_ROOM || chest[i].item == STAFF
+                || !chest[i].item)
             continue;
         spots[count][0] = chest[i].map;
         spots[count][1] = chest[i].x;
         spots[count][2] = chest[i].y;
         count++;
     }
-    /* every search spot, whatever it holds */
+    /* every search spot that holds something */
     for (i=0; i < 3; i++) {
+        if (!search->item[i])
+            continue;
         spots[count][0] = search->map[i];
         spots[count][1] = search->x[i];
         spots[count][2] = search->y[i];
