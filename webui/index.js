@@ -165,7 +165,7 @@ function setup_ui() {
     ui.addTriOption('Features',  5,  4, 2, 'Permanent Torch',
         'At least a 3x3 area will always be lit in dungeons.');
     ui.addTriOption('Features',  7,  2, 4, 'Tablet Cave Torch',
-        'Tablet Cave is lit without a torch. Other caves are unaffected.');
+        'At least a 3x3 area will always be lit in Tablet Cave.');
     ui.addTriOption('Features',  6,  4, 0, 'Fourth Run Success',
         'The fourth run attempt in any battle will always succeed.');
     ui.addTriOption('Monsters',  0,  5, 6, 'Random Monster Abilities',
