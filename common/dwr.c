@@ -916,13 +916,15 @@ static void update_title_screen(dw_rom *rom)
     pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
     pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
     /* A plain word for anyone watching: this ROM has a spoiler log, so it is
-     * not the race game. It costs 10 bytes more than a blank line, which
-     * still fits with a 20-digit seed (1 byte to spare). */
+     * not the race game. It costs 11 bytes more than a blank line, which
+     * exactly fills the title space with a 20-digit seed (0 to spare). An
+     * even length, so it centres exactly on the 32-tile row; "SPOILER"
+     * sat half a tile left. */
     if (SPOILER_LOG(rom)) {
-        pos = center_title_text(pos, "SPOILER");
+        pos = center_title_text(pos, "SPOILERS");
         /* Colour it like RANDOMIZER. 0x3fc4 is the attribute byte for tile
          * rows 20-23 in the title data (f7 08 ff = 8 x 0xff); its high
-         * nibble covers rows 22-23, where SPOILER is. 0xff -> 0xaf moves
+         * nibble covers rows 22-23, where SPOILERS is. 0xff -> 0xaf moves
          * those rows from palette 3 to palette 2, the one RANDOMIZER's row
          * uses (0x3fc1, 0xa5); the version on row 20 keeps palette 3. */
         vpatch(rom, 0x3fc4, 1, 0xaf);
