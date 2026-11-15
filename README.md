@@ -3,8 +3,7 @@
 This is an unofficial fork of [mcgrew's Dragon Warrior Randomizer](https://github.com/mcgrew/dwrandomizer),
 built on its 3.0.4 code. It adds a few new options, a spoiler log and a bigger end-of-game stats
 screen, and keeps everything else from the main randomizer exactly as it was. If you want the
-official, tuned experience, use [dwrandomizer.com](https://dwrandomizer.com/release); this edition
-is for trying something different.
+official, tuned experience, use [dwrandomizer.com](https://dwrandomizer.com/release).
 
 **Play it here: [sillydabbit.github.io/dwrandomizer](https://sillydabbit.github.io/dwrandomizer/)**, or
 download the Windows app from the [latest release](https://github.com/sillydabbit/dwrandomizer/releases/latest).
