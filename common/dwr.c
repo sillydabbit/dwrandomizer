@@ -2003,6 +2003,39 @@ static void skip_vanilla_credits(dw_rom *rom)
 }
 
 /**
+ * Publishes the level at which each spell is learned, for the stats screen.
+ *
+ * Writes one byte per spell in dw_spells order to spell_level_table, at CPU
+ * $bf00 in expansion bank 4. Each is the lowest level whose stats entry has
+ * that spell's bit set, or 0 if it is never learnable in this seed. The bit
+ * layout matches randomize_spells(): spell j is bit (j + 8) % 16.
+ *
+ * The renderer needs the level as well as the timestamp: a spell learned at
+ * level 1 is granted at new-game init without a level-up, so its timestamp
+ * stays zero, which is also what "never learned" looks like.
+ *
+ * @param rom The rom struct
+ */
+static void write_spell_levels(dw_rom *rom)
+{
+    uint8_t levels[HURTMORE + 1];
+    int i, j;
+
+    for (j = HEAL; j <= HURTMORE; j++) {
+        levels[j] = 0;
+        for (i = 0; i < 30; i++) {
+            if (rom->stats[i].spells & (1 << ((j + 8) % 16))) {
+                levels[j] = i + 1;   /* stats[i] is level i+1 */
+                break;
+            }
+        }
+    }
+    /* $bf00 in bank 4 is expansion offset 0x7f00. Writing an expansion address
+     * directly is how credit_music.c places its music data. */
+    ppatch(&rom->expansion[0x7f00], sizeof(levels), levels);
+}
+
+/**
  * Sets up the extra expansion banks
  *
  * @param rom The rom struct
@@ -2029,8 +2062,49 @@ void setup_expansion(dw_rom *rom)
     add_hook(rom, JSR, 0xf720, INIT_SAVE_RAM);
     add_hook(rom, JSR, 0xfee0, COUNT_FRAME);
 
+    /* Item discovery timestamps: Erdrick's Sword and Armor are written
+     * straight into the packed equipment byte $be and never reach an
+     * inventory slot, so they miss the SORT_INVENTORY hook that covers the
+     * other eight tracked items. Each site is a 6-byte
+     * "lda $be / ora #mask / sta $be"; replace it with a 3-byte JSR to a
+     * routine that does the same three instructions and then records the
+     * time, padding the remaining 3 bytes with NOPs. Both sites sit behind
+     * an "already have it?" check, so they only run on first acquisition. */
+    add_hook(rom, JSR, 0xe2a6, GRANT_ERDRICKS_SWORD);
+    nop(rom, 0xe2a9, 3);
+    add_hook(rom, JSR, 0xe2f6, GRANT_ERDRICKS_ARMOR);
+    nop(rom, 0xe2f9, 3);
+
+    /* Spell learn timestamps: show_spells_learned() rewrites the level-up
+     * display as a loop that walks each newly learned spell, and at $eaf3 calls
+     * "jsr $dbf0" to prepare that spell's name. The loop is guarded so it only
+     * runs for a spell the player did not already have, which makes it exactly
+     * the right place to timestamp. Retargeting its 3-byte JSR to a routine
+     * that records the time and then tail-calls $dbf0 needs no NOP padding and
+     * shifts no addresses. */
+    add_hook(rom, JSR, 0xeaf3, RECORD_SPELL_TIME);
+
+    /* Step counter: hook the four directional movement handlers, each of
+     * which begins with the same "lda $16 / cmp #$20" pair (4 bytes).
+     * Replace it with a 3-byte JSR plus a NOP to keep the instruction
+     * stream aligned; step_counter performs those two instructions itself
+     * before returning, and JSR/RTS leave the flags from CMP intact.
+     * Only one handler runs per step, so steps are not double-counted. */
+    add_hook(rom, JSR, 0x3265, STEP_COUNTER);  /* RightSynced */
+    nop(rom, 0x3268, 1);
+    add_hook(rom, JSR, 0x335f, STEP_COUNTER);  /* LeftSynced  */
+    nop(rom, 0x3362, 1);
+    add_hook(rom, JSR, 0x33eb, STEP_COUNTER);  /* DownSynced  */
+    nop(rom, 0x33ee, 1);
+    add_hook(rom, JSR, 0x3517, STEP_COUNTER);  /* UpSynced    */
+    nop(rom, 0x351a, 1);
+
     bank_3_patch(rom);
     fill_expansion(rom);
+
+    /* Must follow fill_expansion(): that writes the zeroed placeholder at
+     * expansion offset 0x7f00 that this fills in. */
+    write_spell_levels(rom);
 
     int track = mt_rand(0, track_count - 1);
     add_music(rom, track);
@@ -2116,6 +2190,13 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     memset(&rom.content[0xf232], 0xff, 0xf35b - 0xf232);
 
     show_spells_learned(&rom);
+    /* Must follow show_spells_learned(): that writes save_spells at 0x3fe0,
+     * including the "jmp $f050" this retargets, and would overwrite the hook
+     * if it ran afterwards. snapshot_spell_time records the frame counter once
+     * per level-up and then continues to $f050, so every spell gained from one
+     * level-up shares a timestamp - sampling the clock per spell recorded the
+     * order the messages were shown in, not the order the levels were gained. */
+    add_hook(&rom, JMP, 0x3fe8, SNAPSHOT_SPELL_TIME);
     other_patches(&rom);
     short_charlock(&rom);
     do_chest_flags(&rom);

@@ -26,10 +26,27 @@
     MINUTES        .dsb 1
     HOURS          .dsb 1
 .ende
+.enum $60
+    SORT_LIST      .dsb 10 ; item discovery timestamps: sorted slot indices
+    SORT_COUNT     .dsb 1
+    SORT_ROW       .dsb 1
+    NAME_PTR       .dsb 2
+    CUR_SLOT       .dsb 1
+    CMP_SLOT_A     .dsb 1
+    CMP_SLOT_B     .dsb 1
+    OFF_A          .dsb 1
+    OFF_B          .dsb 1
+    I_IDX          .dsb 1
+    J_IDX          .dsb 1
+    ROW_START      .dsb 2
+.ende
 
 NMI_INIT_PPU       EQU %00010000
 NMI_SKIP_TILE      EQU #$f7
 
+INSTR_SPELL_TIMES  EQU $f2
+INSTR_SHOW_NUM5    EQU $f3
+INSTR_ITEM_TIMES   EQU $f5
 INSTR_PLAY_TIME    EQU $f6
 INSTR_MON_STAT     EQU $f7
 INSTR_LOAD_CHR     EQU $f8
@@ -98,6 +115,10 @@ IFDEF test_frames
     sta $6f00,x
 ENDIF
 
+    lda #<$6f00
+    sta TMP_ADDR
+    lda #>$6f00
+    sta TMP_ADDR+1
     jsr calculate_play_time
 ;     lda #1
 ;     ldx #<sounds
@@ -146,6 +167,10 @@ convert_character:
     cmp #32
     bne +
     lda #$5f
+    rts
++   cmp #39         ; apostrophe
+    bne +
+    lda #$40
     rts
 +   cmp #97
     bcc +
@@ -321,6 +346,7 @@ handle_instruction:
     jsr bin_to_bcd
     ldx #2
     jsr print_bcd_x
+    rts
 
 +next_instr:
     cmp #INSTR_SHOW_NUMBER
@@ -339,6 +365,22 @@ handle_instruction:
     rts
 
 +next_instr:
+    cmp #INSTR_SHOW_NUM5
+    bne +next_instr
+    ldy #0                  ; same as INSTR_SHOW_NUMBER but 5 digits wide.
+    lda (STATS_ADDR),y      ; Kept as a separate opcode because widening the
+    sta TMP_ADDR            ; 4-digit one would push the monster and spell
+    iny                     ; pages past the 32-tile row.
+    lda (STATS_ADDR),y
+    sta TMP_ADDR + 1
+    jsr addr_to_bcd
+    ldx #5
+    jsr print_bcd_x         ; print all 5 BCD digits (max 65535)
+    lda #2
+    jsr add_stats_addr
+    rts
+
++next_instr:
     cmp #INSTR_SET_PPU
     bne +next_instr
     ldy #0
@@ -353,7 +395,19 @@ handle_instruction:
     rts
 
 +next_instr:
-    cmp #INSTR_FINISH 
+    cmp #INSTR_ITEM_TIMES
+    bne +next_instr
+    jsr render_item_times
+    rts
+
++next_instr:
+    cmp #INSTR_SPELL_TIMES
+    bne +next_instr
+    jsr render_spell_times
+    rts
+
++next_instr:
+    cmp #INSTR_FINISH
     bne +
     lda #<stats_data        ; we've reached the end of the script, so return
     sta STATS_ADDR          ; to the beginning
@@ -407,6 +461,547 @@ add_stats_addr:             ; adds A to the script pointer
     lda STATS_ADDR+1
     adc #0
     sta STATS_ADDR+1
+    rts
+
+; *** Item discovery timestamps: display ***
+; ITEM_TIMES (bank_0.asm, $6760) holds ITEM_ROW_COUNT write-once entries of
+; 3 bytes each: a 24-bit little-endian copy of the live play-time frame
+; counter at $662c, taken the first time that item is acquired. An all-zero
+; entry means "never acquired" and is skipped. Bank 3 writes them
+; (record_item_time / record_item_time_for_slot); nothing else in the ROM
+; writes this region.
+;
+; Slot order below is fixed and must stay in step with item_slot_table in
+; bank_3_patch.asm, which maps an item id to a slot. Display order is not
+; this order - INSTR_ITEM_TIMES sorts by timestamp at render time.
+;
+;   slot  item                 acquired via
+;   ----  -------------------  ---------------------------------------
+;     0   Erdrick's Sword      equipment byte $be  (grant_erdricks_sword)
+;     1   Erdrick's Armor      equipment byte $be  (grant_erdricks_armor)
+;     2   Silver Harp          inventory (sort_inventory)
+;     3   Stones of Sunlight   inventory
+;     4   Erdrick's Token      inventory
+;     5   Death Necklace       inventory
+;     6   Fairy Flute          inventory
+;     7   Staff of Rain        inventory
+;     8   Rainbow Drop         inventory (NPC grant)
+;     9   Fighter's Ring       inventory
+;
+; To add an item: bump ITEM_ROW_COUNT, append to SLOT_OFFSET, name_offset
+; and item_names here, add its id to item_slot_table in bank_3_patch.asm,
+; and widen SORT_LIST in the zero-page enum. A page holds 10 rows at the
+; current double spacing, so an 11th needs a second page or tighter rows.
+
+; ITEM_TIMES is declared in bank_0.asm (shared constants, included first).
+ITEM_ROW_ADDR  EQU $2102   ; first item row, name column (row 8, col 2)
+ITEM_ROW_COUNT EQU 10      ; rows 8,10..26 - fills the page exactly
+ITEM_ROW_WIDTH EQU 30      ; tiles blanked per row (cols 2-31), enough to
+                           ; erase whatever page was displayed before
+ITEM_NAME_WIDTH EQU 18     ; the name field on an item row
+ITEM_TIME_GAP  EQU 2       ; blank tiles between the 18-char padded name and
+                           ; the time, which render_hms prints 8 wide
+ROW_TAIL_WIDTH EQU 2       ; cols 28-29, the columns after the time. Written as
+                           ; spaces so a row covers its whole width in one pass
+                           ; rather than being blanked first. Both pages end
+                           ; their time at col 27:
+                           ;   item row:      18 + 2     + 8 + 2 = ITEM_ROW_WIDTH
+                           ;   spell row: 9 + 4 + 4 + 3 + 8 + 2 = ITEM_ROW_WIDTH
+
+SLOT_OFFSET:               ; slot -> byte offset into ITEM_TIMES (slot * 3)
+    .db 0, 3, 6, 9, 12, 15, 18, 21, 24, 27
+
+name_offset:               ; slot -> byte offset into item_names (slot * 18)
+    .db 0, 18, 36, 54, 72, 90, 108, 126, 144, 162
+
+item_names:
+    .db "Erdrick's Sword   "
+    .db "Erdrick's Armor   "
+    .db "Silver Harp       "
+    .db "Stones of Sunlight"
+    .db "Erdrick's Token   "
+    .db "Death Necklace    "
+    .db "Fairy Flute       "
+    .db "Staff of Rain     "
+    .db "Rainbow Drop      "
+    .db "Fighter's Ring    "
+
+; *** Spell acquisition page ***
+; Same shape as the item page: 10 rows on the same grid, under the header
+; "SPELL       LEVEL     TIME    " - name in cols 0-8, level right-aligned in
+; 13-16, time at 20-27.
+;
+; Names are the classic ones even when Modern Spell Names is on, matching the
+; existing SPELL USAGE page, which hardcodes them in its script.
+SPELL_NAME_WIDTH EQU 9     ; STOPSPELL is the longest spell name
+SPELL_LEVEL_GAP  EQU 4     ; name (cols 0-8) to the level field at col 13
+SPELL_LEVEL_WIDTH EQU 4    ; cols 13-16, right-aligned, matching print_bcd's
+                           ; width on the SPELL USAGE page. Its right edge lines
+                           ; up with the "LEVEL" header, which ends at col 16.
+SPELL_TIME_GAP   EQU 3     ; end of the level (col 17) to the time column (20).
+                           ; 20 is where render_item_row puts its time - an
+                           ; 18-char name plus ITEM_TIME_GAP - so the two pages
+                           ; line up.
+
+spell_name_offset:         ; spell index -> byte offset into spell_names
+    .db 0, 9, 18, 27, 36, 45, 54, 63, 72, 81
+
+spell_alpha:               ; spell index -> its position in alphabetical order.
+                           ; Only used to break ties when two spells are learned
+                           ; at the same level: HEAL, HEALMORE, HURT, HURTMORE,
+                           ; OUTSIDE, RADIANT, REPEL, RETURN, SLEEP, STOPSPELL.
+    .db 0, 2, 8, 5, 9, 4, 7, 6, 1, 3
+
+spell_names:               ; dw_spells order, space padded to SPELL_NAME_WIDTH
+    .db "HEAL     "
+    .db "HURT     "
+    .db "SLEEP    "
+    .db "RADIANT  "
+    .db "STOPSPELL"
+    .db "OUTSIDE  "
+    .db "RETURN   "
+    .db "REPEL    "
+    .db "HEALMORE "
+    .db "HURTMORE "
+
+spell_order_lt:              ; CMP_SLOT_A, CMP_SLOT_B = spell indices.
+                              ; Returns A=1 if A sorts before B, else A=0.
+                              ; Ordered by learn level, not timestamp: a multi-
+                              ; level jump stamps every spell it grants in
+                              ; dw_spells bit order, not level order, so the
+                              ; timestamps tie or invert. Ties break
+                              ; alphabetically; equal keys return 0, so the
+                              ; insertion sort stays stable.
+                              ; Alphabetical ties are a deliberate choice, not
+                              ; the game's order: the level-up messages walk
+                              ; spells in dw_spells bit order, so OUTSIDE is
+                              ; announced before HURTMORE when both arrive at
+                              ; one level. Matching that would mean breaking
+                              ; ties on spell index instead of spell_alpha.
+    ldx CMP_SLOT_A
+    ldy CMP_SLOT_B
+    lda spell_level_table,x
+    cmp spell_level_table,y
+    bcc @lt
+    bne @ge
+    lda spell_alpha,x
+    cmp spell_alpha,y
+    bcc @lt
+@ge:
+    lda #0
+    rts
+@lt:
+    lda #1
+    rts
+
+render_spell_row:            ; A = spell index, PPU_POSITION at the row start.
+    sta CUR_SLOT
+    tax
+    lda spell_name_offset,x
+    clc
+    adc #<spell_names
+    sta NAME_PTR
+    lda #0
+    adc #>spell_names
+    sta NAME_PTR+1
+    ldx #SPELL_NAME_WIDTH
+    jsr print_name_x          ; PPU_POSITION now at col 9
+
+    ldx #SPELL_LEVEL_GAP
+    jsr print_spaces_x        ; cols 9-12, now at the level column
+
+    ldx CUR_SLOT
+    lda spell_level_table,x   ; in this bank, so directly readable
+    sta BCD_INPUT
+    lda #0
+    sta BCD_INPUT+1
+    jsr bin_to_bcd
+    jsr clear_bcd_zeros       ; blank the leading zeros so the number right-
+                              ; aligns in its field, the way addr_to_bcd does
+                              ; for the SPELL USAGE counts
+    ldx #SPELL_LEVEL_WIDTH
+    jsr print_bcd_x           ; PPU_POSITION now at col 17
+
+    ldx #SPELL_TIME_GAP
+    jsr print_spaces_x        ; cols 17-19, now at the time column
+
+    ldx CUR_SLOT
+    lda SLOT_OFFSET,x
+    clc
+    adc #<SPELL_TIMES
+    sta TMP_ADDR
+    lda #0
+    adc #>SPELL_TIMES
+    sta TMP_ADDR+1
+    jsr render_hms            ; cols 20-27
+    ldx #ROW_TAIL_WIDTH
+    jsr print_spaces_x        ; cols 28-29 - the row is now fully overwritten
+    rts
+
+render_spell_times:           ; entry point for the INSTR_SPELL_TIMES opcode.
+                              ; Builds the list of learned spells, sorts it,
+                              ; then draws ITEM_ROW_COUNT full-width rows.
+    ; --- build the list of spells to show ---
+    ; Shown if it has a timestamp, or is learned at level 1 - those are granted
+    ; at new-game init without a level-up, so the hook never runs and the zero
+    ; timestamp is legitimate. Level 0 means not learnable in this seed
+    ; (Permanent Repel, No Hurtmore); a level with no timestamp means unreached.
+    lda #0
+    sta CUR_SLOT
+    sta SORT_COUNT
+@build_loop:
+    ldx CUR_SLOT
+    lda spell_level_table,x
+    beq @build_skip           ; never learnable in this seed
+    cmp #1
+    beq @build_add            ; starting spell - always show, at 0:00:00
+    ldx CUR_SLOT
+    lda SLOT_OFFSET,x
+    tax
+    lda SPELL_TIMES,x
+    ora SPELL_TIMES+1,x
+    ora SPELL_TIMES+2,x
+    beq @build_skip           ; learnable, but not learned yet
+@build_add:
+    ldy SORT_COUNT
+    lda CUR_SLOT
+    sta SORT_LIST,y
+    inc SORT_COUNT
+@build_skip:
+    inc CUR_SLOT
+    lda CUR_SLOT
+    cmp #ITEM_ROW_COUNT
+    bne @build_loop
+
+    ; --- insertion sort SORT_LIST[0..SORT_COUNT-1], by learn level (see spell_order_lt) ---
+    lda SORT_COUNT
+    cmp #2
+    bcc @sort_done
+    lda #1
+    sta I_IDX
+@sort_outer:
+    lda I_IDX
+    cmp SORT_COUNT
+    bcs @sort_done
+    lda I_IDX
+    sta J_IDX
+@sort_inner:
+    lda J_IDX
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    sta CMP_SLOT_A
+    dex
+    lda SORT_LIST,x
+    sta CMP_SLOT_B
+    jsr spell_order_lt
+    cmp #0
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    pha
+    dex
+    lda SORT_LIST,x
+    ldy J_IDX
+    sta SORT_LIST,y
+    pla
+    sta SORT_LIST,x
+    dec J_IDX
+    jmp @sort_inner
+@sort_inner_done:
+    inc I_IDX
+    jmp @sort_outer
+@sort_done:
+
+    ; --- draw the rows: learned spells sorted, the rest left blank ---
+    lda #<ITEM_ROW_ADDR
+    sta ROW_START
+    lda #>ITEM_ROW_ADDR
+    sta ROW_START+1
+    lda #0
+    sta SORT_ROW
+@row_loop:
+    lda ROW_START
+    sta PPU_POSITION
+    lda ROW_START+1
+    sta PPU_POSITION+1
+    lda SORT_ROW
+    cmp SORT_COUNT
+    bcs @row_blank            ; nothing for this row - clear it
+    ldx SORT_ROW
+    lda SORT_LIST,x
+    jsr render_spell_row                    ; writes all 30 columns, so it overwrites in place
+    jmp @row_next
+@row_blank:
+    jsr blank_row
+@row_next:
+    lda ROW_START
+    clc
+    adc #$40
+    sta ROW_START
+    lda ROW_START+1
+    adc #0
+    sta ROW_START+1
+    inc SORT_ROW
+    lda SORT_ROW
+    cmp #ITEM_ROW_COUNT
+    bne @row_loop
+
+    ; Restore the play-time variables: every row above ran calculate_play_time
+    ; against its own timestamp, overwriting the shared HOURS/MINUTES/SECONDS
+    ; that a later INSTR_PLAY_TIME reads. The script loops, so this must reset.
+    lda #<$6f00
+    sta TMP_ADDR
+    lda #>$6f00
+    sta TMP_ADDR+1
+    jsr calculate_play_time
+    rts
+
+render_hms:                  ; TMP_ADDR = pointer to a 3-byte LE frame count;
+                              ; prints "H:MM:SS" at PPU_POSITION. The hour is
+                              ; always shown, even when zero: suppressing it
+                              ; would mix 5- and 7-character times in one column.
+    jsr calculate_play_time
+    lda #0
+    sta BCD_INPUT+1
+    lda HOURS
+    sta BCD_INPUT
+    jsr bin_to_bcd
+    jsr clear_bcd_zeros
+    ldx #2
+    jsr print_bcd_x
+
+    lda #$44
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+
+    lda MINUTES
+    sta BCD_INPUT
+    jsr bin_to_bcd
+    ldx #2
+    jsr print_bcd_x
+
+    lda #$44
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+
+    lda SECONDS
+    sta BCD_INPUT
+    jsr bin_to_bcd
+    ldx #2
+    jsr print_bcd_x
+    rts
+
+print_name_x:                ; NAME_PTR set, X = field width; prints exactly
+                              ; that many chars. Names are space padded to the
+                              ; field width so a short one erases the tail of
+                              ; whatever was there before. Clobbers X.
+    ldy #0
+@loop:
+    lda (NAME_PTR),y
+    jsr convert_character
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+    iny
+    dex
+    bne @loop
+    rts
+
+blank_row:                   ; blanks ITEM_ROW_WIDTH tiles from PPU_POSITION,
+                              ; clearing the full width of one row. Only needed
+                              ; for rows with nothing to show - a row that has
+                              ; content covers its own width.
+    ldx #ITEM_ROW_WIDTH
+print_spaces_x:              ; writes X blank tiles at PPU_POSITION.
+                              ; Rows write their gaps rather than skipping them
+                              ; by advancing PPU_POSITION, so a row overwrites
+                              ; its full width in one pass. Blanking first is
+                              ; what made this page flicker.
+@loop:
+    lda #$5f
+    sta NEXT_TILE
+    jsr exp_wait_for_nmi
+    jsr inc_ppu_position
+    dex
+    bne @loop
+    rts
+
+slot_time_lt:                ; CMP_SLOT_A, CMP_SLOT_B = slot numbers.
+                              ; Returns A=1 if time[A] < time[B], else A=0.
+                              ; 24-bit compare, high byte first; equal values
+                              ; return 0 so the insertion sort stays stable.
+    lda CMP_SLOT_A
+    tax
+    lda SLOT_OFFSET,x
+    sta OFF_A
+    lda CMP_SLOT_B
+    tax
+    lda SLOT_OFFSET,x
+    sta OFF_B
+    ldx OFF_A
+    ldy OFF_B
+    lda ITEM_TIMES+2,x
+    cmp ITEM_TIMES+2,y
+    bcc @lt
+    bne @ge
+    lda ITEM_TIMES+1,x
+    cmp ITEM_TIMES+1,y
+    bcc @lt
+    bne @ge
+    lda ITEM_TIMES+0,x
+    cmp ITEM_TIMES+0,y
+    bcc @lt
+@ge:
+    lda #0
+    rts
+@lt:
+    lda #1
+    rts
+
+render_item_row:             ; A = slot number, PPU_POSITION at the row start.
+                              ; Draws the name, gap, timestamp and trailing
+                              ; columns - the whole ITEM_ROW_WIDTH.
+    sta CUR_SLOT
+    tax
+    lda name_offset,x
+    clc
+    adc #<item_names
+    sta NAME_PTR
+    lda #0
+    adc #>item_names
+    sta NAME_PTR+1
+    ldx #ITEM_NAME_WIDTH
+    jsr print_name_x          ; PPU_POSITION now at row_start+18
+    ldx #ITEM_TIME_GAP
+    jsr print_spaces_x        ; cols 18-19, now at the time column
+    ldx CUR_SLOT
+    lda SLOT_OFFSET,x
+    clc
+    adc #<ITEM_TIMES
+    sta TMP_ADDR
+    lda #0
+    adc #>ITEM_TIMES
+    sta TMP_ADDR+1
+    jsr render_hms            ; cols 20-27
+    ldx #ROW_TAIL_WIDTH
+    jsr print_spaces_x        ; cols 28-29 - the row is now fully overwritten
+    rts
+
+render_item_times:            ; entry point for the INSTR_ITEM_TIMES opcode.
+                              ; Builds the list of acquired slots, sorts it by
+                              ; timestamp, then draws ITEM_ROW_COUNT full-width
+                              ; rows.
+    ; --- build the unsorted list of acquired slots ---
+    lda #0
+    sta CUR_SLOT
+    sta SORT_COUNT
+@build_loop:
+    lda CUR_SLOT
+    tax
+    lda SLOT_OFFSET,x
+    tax
+    lda ITEM_TIMES,x
+    ora ITEM_TIMES+1,x
+    ora ITEM_TIMES+2,x
+    beq @build_skip
+    ldy SORT_COUNT
+    lda CUR_SLOT
+    sta SORT_LIST,y
+    inc SORT_COUNT
+@build_skip:
+    inc CUR_SLOT
+    lda CUR_SLOT
+    cmp #ITEM_ROW_COUNT
+    bne @build_loop
+
+    ; --- insertion sort SORT_LIST[0..SORT_COUNT-1], earliest time first ---
+    lda SORT_COUNT
+    cmp #2
+    bcc @sort_done
+    lda #1
+    sta I_IDX
+@sort_outer:
+    lda I_IDX
+    cmp SORT_COUNT
+    bcs @sort_done
+    lda I_IDX
+    sta J_IDX
+@sort_inner:
+    lda J_IDX
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    sta CMP_SLOT_A
+    dex
+    lda SORT_LIST,x
+    sta CMP_SLOT_B
+    jsr slot_time_lt
+    cmp #0
+    beq @sort_inner_done
+    ldx J_IDX
+    lda SORT_LIST,x
+    pha
+    dex
+    lda SORT_LIST,x
+    ldy J_IDX
+    sta SORT_LIST,y
+    pla
+    sta SORT_LIST,x
+    dec J_IDX
+    jmp @sort_inner
+@sort_inner_done:
+    inc I_IDX
+    jmp @sort_outer
+@sort_done:
+
+    ; --- render all ITEM_ROW_COUNT rows: acquired items (sorted), blank otherwise ---
+    lda #<ITEM_ROW_ADDR
+    sta ROW_START
+    lda #>ITEM_ROW_ADDR
+    sta ROW_START+1
+    lda #0
+    sta SORT_ROW
+@row_loop:
+    lda ROW_START
+    sta PPU_POSITION
+    lda ROW_START+1
+    sta PPU_POSITION+1
+    lda SORT_ROW
+    cmp SORT_COUNT
+    bcs @row_blank            ; nothing for this row - clear it
+    ldx SORT_ROW
+    lda SORT_LIST,x
+    jsr render_item_row       ; writes all 30 columns, so it overwrites in place
+    jmp @row_next
+@row_blank:
+    jsr blank_row
+@row_next:
+    lda ROW_START
+    clc
+    adc #$40
+    sta ROW_START
+    lda ROW_START+1
+    adc #0
+    sta ROW_START+1
+    inc SORT_ROW
+    lda SORT_ROW
+    cmp #ITEM_ROW_COUNT
+    bne @row_loop
+
+    ; Restore the play-time variables. Every item row above ran
+    ; calculate_play_time against its own timestamp, which overwrites the
+    ; shared HOURS/MINUTES/SECONDS/FRAMES. The previous page's
+    ; INSTR_PLAY_TIME reads those, and the stats script loops forever, so
+    ; without this it would print the last item's time on every pass after
+    ; the first. (The old Play Time row happened to do this implicitly.)
+    lda #<$6f00
+    sta TMP_ADDR
+    lda #>$6f00
+    sta TMP_ADDR+1
+    jsr calculate_play_time
     rts
 
 credits_data:
@@ -740,6 +1335,40 @@ stats_data:
 
     .db INSTR_WAIT, 240
 
+    ; Item discovery timestamps page
+    ; Header is uppercase to match every other header row on this screen -
+    ; the header rows use a subpalette in which the font's main colour is
+    ; black, so mixed-case text renders unreadably there. The string is
+    ; padded to 30 chars (cols 2-31) so it fully erases whichever header was
+    ; there before it (the last monster page's, or "OTHER STATS" on the loop
+    ; back around), which would otherwise leave characters behind.
+    .db INSTR_SET_PPU
+    .word $20c2 ; PPU address
+    .db "KEY ITEMS             TIME    "
+
+    .db INSTR_ITEM_TIMES
+
+    ; Play Time is omitted here: row 26 is needed for the 10th item, and the
+    ; page still lands last on SPELL USAGE. The renderer overwrites every row
+    ; it uses, so no clear is needed.
+
+    .db INSTR_WAIT, 240
+    .db INSTR_WAIT, 120 ; 6s total - INSTR_WAIT takes a single byte of frames
+
+    ; Spell acquisition page. Ordered after the item page: the key items are the
+    ; headline of a run, so they lead, and Play Time still lands last on SPELL
+    ; USAGE. Header is uppercase and padded to 30 chars for the same reasons as
+    ; the item page: the header subpalette renders mixed case unreadably, and a
+    ; short string would leave the previous header's tail on screen.
+    .db INSTR_SET_PPU
+    .word $20c2 ; PPU address
+    .db "SPELL       LEVEL     TIME    "
+
+    .db INSTR_SPELL_TIMES
+
+    .db INSTR_WAIT, 240
+    .db INSTR_WAIT, 120 ; 6s total - INSTR_WAIT takes a single byte of frames
+
     .db INSTR_SET_PPU
     .word $20c2
     .db " SPELL USAGE"
@@ -868,11 +1497,35 @@ stats_data:
     .word $663a ; Data address
 
     .db INSTR_SET_PPU
-    .word $2311 ; PPU address
-    .db "Play Time"
+    .word $22d1 ; PPU address
+    .db "Steps   "      ; 8 chars, not 9: the 5-digit field then ends in the
+    .db INSTR_SHOW_NUM5  ; same column as the 4-digit numbers above it
+    .word STEP_COUNT ; Data address
+
+    ; The level the run finished on, in the row the "Play Time" label used to
+    ; occupy. Padded to the 9-char label field every other stat on this page
+    ; uses, so INSTR_SHOW_NUMBER's 4-wide value lands in the identical column
+    ; (label 17-25, number 26-29) and no new opcode is needed. One word, like
+    ; Deaths and Steps above it - every figure on this page is an end-of-run
+    ; total, so "Level" can only mean the level the run ended on.
+    ; The time below is left unlabelled: it is the only time on the page, in an
+    ; unmistakable format, directly beneath the line it belongs to.
     .db INSTR_SET_PPU
-    .word $2353 ; PPU address
+    .word $2311 ; PPU address
+    .db "Level    "
+    .db INSTR_SHOW_NUMBER
+    .word WIN_LEVEL ; Data address
+    .db INSTR_SET_PPU
+    ; Centred in the OTHER STATS column rather than right-aligned with the
+    ; stat numbers above. The column's content runs cols 17-29 and the time
+    ; field is a fixed 11 wide - INSTR_PLAY_TIME always prints 2 digits for
+    ; each of hours, minutes, seconds and frames plus 3 separators - so col
+    ; 18 centres it and nothing about it varies with run length. Only the
+    ; leading hour digit changes: clear_bcd_zeros blanks it under 10 hours,
+    ; which fills one more cell on the left but never moves the field.
+    .word $2352 ; PPU address
     .db INSTR_PLAY_TIME
+
 
     .db INSTR_WAIT, 240
     .db INSTR_FINISH
@@ -880,10 +1533,13 @@ stats_data:
 stats_done:
         jmp stats_done
 
-calculate_play_time:
+calculate_play_time:     ; converts the 24-bit frame count at (TMP_ADDR) into
+                          ; HOURS/MINUTES/SECONDS/FRAMES
     ; divide frames into hours
     ldx #2
--   lda $6f00,x
+-   txa
+    tay
+    lda (TMP_ADDR),y
     sta DIVIDEND,x
     lda hours_divisor,x
     sta DIVISOR,x
@@ -935,7 +1591,7 @@ calculate_play_time:
     sbc #1
     sta REMAINDER
     lda REMAINDER+1
-    sbc #1
+    sbc #0             ; borrow only - #1 here would subtract 257, not 1
     sta REMAINDER+1
     +
     ; divide by 6 to get centiseconds
@@ -1197,5 +1853,25 @@ exp_wait_for_nmi:
 
 .include famistudio_conf.asm
 .include famistudio_asm6.asm
+
+; *** Spell learn levels ***
+; Pinned at a fixed address so setup_expansion() can write it directly, the way
+; credit_music.c already writes &rom->expansion[0x4000]. CPU $bf00 in bank 4 is
+; expansion offset 0x7f00; the bank's code ends at $b84e, so this cannot collide
+; - and if it ever did, the assembler would say so.
+;
+; It lives here, rather than in bank 3 with the rest of the patch, because this
+; is the bank the renderer runs in. While the credits are up, $c000-$ffff holds
+; bank_7, not bank 3, so a bank-3 table would be unreadable from here. Keeping
+; the data with the code that reads it removes the problem instead of working
+; around it with an SRAM copy.
+.org $bf00
+spell_level_table:     ; spell index -> the level at which that spell is learned.
+                       ; Filled in by setup_expansion() from rom->stats, which is
+                       ; where the randomizer records which spells each level
+                       ; grants. 0 means the spell is never learnable in this
+                       ; seed - Permanent Repel and No Hurtmore set the level to
+                       ; 255, so those bits never appear in the stats table.
+    .db 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 .org $c000

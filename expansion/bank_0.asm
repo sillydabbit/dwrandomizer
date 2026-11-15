@@ -4,6 +4,30 @@ FILLVALUE $ff
 CURRENT_TILE  EQU $E0
 SELECTED_ITEM EQU $D7
 ITEMS         EQU $C1
+ITEM_TIMES    EQU $6760 ; item discovery timestamps: 10 slots, 3 bytes each
+SPELL_TIMES   EQU $6790 ; spell learn timestamps: 10 slots, 3 bytes each.
+                        ; Not $677e (the obvious spot after ITEM_TIMES) because
+                        ; upstream dev-3.1's experimental autosave claims $6780,
+                        ; which would land inside that block. Both ranges sit
+                        ; inside what init_save_ram already clears.
+SPELL_STAMP   EQU $67b8 ; frame counter captured at the moment of a level-up,
+                        ; 3 bytes LE. Every spell learned from that level-up is
+                        ; timestamped from this rather than sampling $662c
+                        ; itself, so spells gained together share one time and
+                        ; the page reads in order when sorted by level. Sampling
+                        ; per spell did not: the level-up display shows one
+                        ; spell at a time and waits for the player between them,
+                        ; so the stamps recorded message order, not level order.
+WIN_LEVEL     EQU $67bb ; the player's level when the game was won, 16-bit LE.
+                        ; Two bytes so the existing INSTR_SHOW_NUMBER opcode can
+                        ; print it - that reads a 16-bit value and renders it 4
+                        ; wide, right-aligned with leading zeros blanked, exactly
+                        ; like every other OTHER STATS figure. Frozen by
+                        ; snapshot_timer; inside what init_save_ram clears.
+STEP_COUNT    EQU $6804 ; step counter, 16-bit LE
+ITEM_ADD_ID   EQU $6806 ; the item id being added, captured by stash_and_add
+                        ; before b3_e01b destroys it. Transient - written and
+                        ; read back within a single call, never persisted.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks
@@ -29,6 +53,8 @@ OAMDMA     EQU $4014
 ; DW labels
 
 b3_e01b EQU $e01b
+b3_dbf0 EQU $dbf0 ; prepares a spell name for display; takes the spell's name
+                  ; index in A. record_spell_time tail-calls it.
 
 X_POS EQU $3A
 X_POS_2 EQU $8E
