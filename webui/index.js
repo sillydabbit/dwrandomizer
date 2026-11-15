@@ -168,6 +168,8 @@ function setup_ui() {
         'At least a 3x3 area will always be lit in Tablet Cave.');
     ui.addTriOption('Features',  6,  4, 0, 'Fourth Run Success',
         'The fourth run attempt in any battle will always succeed.');
+    ui.addTriOption('Features',  9,  2, 0, 'Permanent Radiant',
+        'At least a 7x7 area will always be lit in dungeons.');
     ui.addTriOption('Monsters',  0,  5, 6, 'Random Monster Abilities',
         'Monster spells and abilities will be randomized.');
     ui.addTriOption('Monsters',  2,  5, 4, 'Random Monster Zones',
