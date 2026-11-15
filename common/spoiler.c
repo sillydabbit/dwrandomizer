@@ -16,6 +16,21 @@
 #define SEARCH_COUNT 3
 #define SPIKE_COUNT 8
 #define SECTION_WIDTH 78
+
+/*
+ * Oops All Treasure Guards keeps its guards in a table of its own, not the
+ * encounter table: four arrays of A7_GUARDS_MAX - map, x, y, enemy - at $bf00
+ * in expansion bank 3, with $ff in the map of an empty slot. Must match the
+ * A7_GUARD_* defines in dwr.c and a7_guard_map in expansion/exp_bank_3.asm.
+ * Only built where that flag exists.
+ */
+#ifdef OOPS_ALL_TREASURE_GUARDS
+#define A7_GUARDS_MAX    32
+#define A7_GUARD_MAP     (0xbf00 - 0x8000)
+#define A7_GUARD_X       (A7_GUARD_MAP + A7_GUARDS_MAX)
+#define A7_GUARD_Y       (A7_GUARD_X + A7_GUARDS_MAX)
+#define A7_GUARD_MONSTER (A7_GUARD_Y + A7_GUARDS_MAX)
+#endif
 #define XY_SIZE 12
 
 /**
@@ -233,7 +248,13 @@ static const struct {
     { TAB_FEATURES,   4, 6, TRUE,  "Repel in Dungeons" },
     { TAB_FEATURES,   4, 4, TRUE,  "Permanent Repel" },
     { TAB_FEATURES,   4, 2, TRUE,  "Permanent Torch" },
+#ifdef TABLET_CAVE_TORCH
+    { TAB_FEATURES,   2, 4, TRUE,  "Tablet Cave Torch" },
+#endif
     { TAB_FEATURES,   4, 0, TRUE,  "Fourth Run Success" },
+#ifdef PERMANENT_RADIANT
+    { TAB_FEATURES,   2, 0, TRUE,  "Permanent Radiant" },
+#endif
     { TAB_MONSTERS,   5, 6, TRUE,  "Random Monster Abilities" },
     { TAB_MONSTERS,   5, 4, TRUE,  "Random Monster Zones" },
     { TAB_MONSTERS,   5, 2, TRUE,  "Random Monster Stats" },
@@ -247,6 +268,9 @@ static const struct {
     { TAB_SHORTCUTS,  7, 0, TRUE,  "Short Charlock" },
     { TAB_SHORTCUTS,  8, 6, TRUE,  "Don't Require Magic Keys" },
     { TAB_SHORTCUTS, 13, 2, TRUE,  "Summer Sale" },
+#ifdef GUARANTEED_GOLD
+    { TAB_SHORTCUTS,  6, 0, TRUE,  "Guaranteed Gold Grind" },
+#endif
     { TAB_SHORTCUTS,  8, 2, TRUE,  "Cursed Princess" },
     { TAB_SHORTCUTS,  8, 0, TRUE,  "Three's Company" },
     { TAB_CHALLENGE,  9, 6, TRUE,  "No Hurtmore" },
@@ -254,10 +278,16 @@ static const struct {
     { TAB_CHALLENGE,  9, 2, TRUE,  "Invisible Hero" },
     { TAB_CHALLENGE,  9, 0, TRUE,  "Invisible NPCs" },
     { TAB_CHALLENGE, 13, 0, TRUE,  "Treasure Guards" },
+#ifdef OOPS_ALL_TREASURE_GUARDS
+    { TAB_CHALLENGE,  8, 4, TRUE,  "Oops All Treasure Guards" },
+#endif
     { TAB_CHALLENGE, 10, 0, TRUE,  "Big Swamp" },
     { TAB_CHALLENGE, 10, 2, TRUE,  "Randomly Rotate/Mirror Dungeons" },
     { TAB_CHALLENGE, 10, 4, TRUE,  "No Armor in Charlock" },
     { TAB_CHALLENGE, 10, 6, TRUE,  "Easy Charlock" },
+#ifdef PROGRESSIVE_EQUIPMENT
+    { TAB_CHALLENGE, 11, 2, TRUE,  "Progressive Equipment" },
+#endif
     { TAB_COSMETIC,  11, 6, TRUE,  "Modern Spell Names" },
     { TAB_COSMETIC,  11, 4, TRUE,  "Noir Mode" },
     { TAB_COSMETIC,  14, 7, FALSE, "Shuffle Music" },
@@ -671,7 +701,42 @@ static BOOL has_shopkeeper(dw_rom *rom, uint8_t map, uint8_t dialog)
     return FALSE;
 }
 
-/** The encounter table entry on a tile, or -1. */
+enum { A7_MAP, A7_X, A7_Y, A7_MONSTER };
+
+/** How many guards Oops All Treasure Guards placed: 0 when it is off. */
+static int a7_guards(dw_rom *rom)
+{
+#ifdef OOPS_ALL_TREASURE_GUARDS
+    int i;
+
+    if (!OOPS_ALL_TREASURE_GUARDS(rom))
+        return 0;
+    for (i=0; i < A7_GUARDS_MAX; i++) {
+        if (rom->expansion[A7_GUARD_MAP + i] == 0xff)
+            break;
+    }
+    return i;
+#else
+    (void)rom;
+    return 0;
+#endif
+}
+
+/** One field (A7_MAP, A7_X, ...) of an Oops All Treasure Guards guard. */
+static uint8_t a7_guard(dw_rom *rom, int field, int i)
+{
+#ifdef OOPS_ALL_TREASURE_GUARDS
+    return rom->expansion[A7_GUARD_MAP + field * A7_GUARDS_MAX + i];
+#else
+    (void)rom; (void)field; (void)i;
+    return 0xff;
+#endif
+}
+
+/**
+ * The guard on a tile, or -1: an encounter table entry, or SPIKE_COUNT plus
+ * an Oops All Treasure Guards slot.
+ */
 static int guard_at(dw_rom *rom, uint8_t map, uint8_t x, uint8_t y)
 {
     int i;
@@ -682,7 +747,20 @@ static int guard_at(dw_rom *rom, uint8_t map, uint8_t x, uint8_t y)
                 && spike->y[i] == y)
             return i;
     }
+    for (i=0; i < a7_guards(rom); i++) {
+        if (a7_guard(rom, A7_MAP, i) == map && a7_guard(rom, A7_X, i) == x
+                && a7_guard(rom, A7_Y, i) == y)
+            return SPIKE_COUNT + i;
+    }
     return -1;
+}
+
+/** The enemy of a guard_at() result. */
+static uint8_t guard_monster(dw_rom *rom, int guard)
+{
+    if (guard < SPIKE_COUNT)
+        return rom->spike_table->monster[guard];
+    return a7_guard(rom, A7_MONSTER, guard - SPIKE_COUNT);
 }
 
 /** The enemy guarding a tile, "(Werewolf)", or "" if there is none. */
@@ -694,7 +772,7 @@ static const char *guard_name(dw_rom *rom, uint8_t map, uint8_t x, uint8_t y)
     if (guard < 0)
         return "";
     snprintf(name, sizeof(name), "(%s)",
-            enemy_name(rom->spike_table->monster[guard]));
+            enemy_name(guard_monster(rom, guard)));
     return name;
 }
 
@@ -736,12 +814,10 @@ static void add_header(char **pos, char *end, dw_rom *rom, uint64_t crc)
 }
 
 /**
- * Whether the seed has any Treasure Guards: an encounter tile past the game's
- * own three. Key items, chests and search spots get a "Guarded by" column,
- * and the legend an entry for it, only then - Treasure Guards left to the
- * seed can come up with none.
+ * Whether the Treasure Guards option placed any guards: an encounter tile
+ * past the game's own three. Left to the seed, it can come up with none.
  */
-static BOOL show_guards(dw_rom *rom)
+static BOOL treasure_guards(dw_rom *rom)
 {
     int i;
 
@@ -750,6 +826,16 @@ static BOOL show_guards(dw_rom *rom)
             return TRUE;
     }
     return FALSE;
+}
+
+/**
+ * Whether the seed has any guards, from Treasure Guards or Oops All Treasure
+ * Guards. Key items, chests and search spots get a "Guarded by" column, and
+ * the legend an entry for it, only then.
+ */
+static BOOL show_guards(dw_rom *rom)
+{
+    return treasure_guards(rom) || a7_guards(rom) > 0;
 }
 
 #define LEGEND_TERM 16
@@ -810,7 +896,7 @@ static void add_option(char **pos, char *end, dw_rom *rom,
      * price gets its own coin flip, so the box says whether any came up. */
     if (maybe && options[i].byte == 13) {
         if (options[i].bit == 0)
-            on = show_guards(rom);
+            on = treasure_guards(rom);
         else
             on = TRUE;  /* about half of 17 prices; none is a 1 in 131072 */
     }
@@ -1302,16 +1388,42 @@ static const char *encounter_place(dw_rom *rom, int i)
     return chest_place(spike->map[i], spike->x[i], spike->y[i]);
 }
 
+typedef struct { uint8_t map, x, y, monster; } guard_tile;
+
+/** A map's place in map_order, so lists can follow it. */
+static int map_rank(uint8_t map)
+{
+    size_t m;
+
+    for (m=0; m < sizeof(map_order); m++) {
+        if (map_order[m] == map)
+            return (int)m;
+    }
+    return (int)sizeof(map_order);
+}
+
+/** Whether a sorts after b: by place, then top to bottom, then left to right. */
+static BOOL guard_after(const guard_tile *a, const guard_tile *b)
+{
+    if (map_rank(a->map) != map_rank(b->map))
+        return map_rank(a->map) > map_rank(b->map);
+    if (a->y != b->y)
+        return a->y > b->y;
+    return a->x > b->x;
+}
+
 static void add_encounters(char **pos, char *end, dw_rom *rom)
 {
-    int i, count = 0;
+    int i, j, count = 0;
     char buf[XY_SIZE];
     table *t;
     dwr_spike_table *spike = rom->spike_table;
+    guard_tile guards[SPIKE_COUNT + 32], tmp;
 
     add(pos, end, "\nEncounter tiles\n\n");
     for (i=0; i < SPIKE_COUNT; i++)
         count += spike->map[i] != NO_MAP;
+    count += a7_guards(rom);
     if (!count) {
         add(pos, end, "None in this seed.\n");
         return;
@@ -1329,13 +1441,47 @@ static void add_encounters(char **pos, char *end, dw_rom *rom)
         return;
     t->head[0] = "Tile";
     t->head[1] = "Enemy";
-    for (i=0; i < SPIKE_COUNT; i++) {
+    /* the game's own three first, in their table order */
+    for (i=0; i < 3; i++) {
         if (spike->map[i] == NO_MAP)
             continue;
         table_row(t, ROW_CELLS);
         table_set(t, 0, "%s %s", encounter_place(rom, i),
                 xy(buf, spike->x[i], spike->y[i]));
         table_set(t, 1, "%s", enemy_name(spike->monster[i]));
+    }
+    /* then every Treasure Guard, from either option, in the order Chests &
+     * search spots uses: by place, then top to bottom, then left to right.
+     * Oops All Treasure Guards' routines check the game's tiles first, so a
+     * tile is never in both tables. */
+    count = 0;
+    for (i=3; i < SPIKE_COUNT; i++) {
+        if (spike->map[i] == NO_MAP)
+            continue;
+        guards[count].map = spike->map[i];
+        guards[count].x = spike->x[i];
+        guards[count].y = spike->y[i];
+        guards[count++].monster = spike->monster[i];
+    }
+    for (i=0; i < a7_guards(rom); i++) {
+        guards[count].map = a7_guard(rom, A7_MAP, i);
+        guards[count].x = a7_guard(rom, A7_X, i);
+        guards[count].y = a7_guard(rom, A7_Y, i);
+        guards[count++].monster = a7_guard(rom, A7_MONSTER, i);
+    }
+    for (i=1; i < count; i++) {
+        for (j=i; j > 0 && guard_after(&guards[j - 1], &guards[j]); j--) {
+            tmp = guards[j];
+            guards[j] = guards[j - 1];
+            guards[j - 1] = tmp;
+        }
+    }
+    for (i=0; i < count; i++) {
+        table_row(t, ROW_CELLS);
+        table_set(t, 0, "%s %s",
+                chest_place(guards[i].map, guards[i].x, guards[i].y),
+                xy(buf, guards[i].x, guards[i].y));
+        table_set(t, 1, "%s", enemy_name(guards[i].monster));
     }
     table_print(pos, end, t);
 }
