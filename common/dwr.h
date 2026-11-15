@@ -16,8 +16,16 @@
 // #elif DWR_ALPHA
 // #define VERSION DWR_VERSION " alpha " BUILD
 // #else
-#define VERSION DWR_VERSION " beta " BUILD
+// #define VERSION DWR_VERSION " beta " BUILD
 // #endif
+
+/*
+ * The fork's own version, shown on the title screen, the web page and the
+ * spoiler log. Bump it with each deploy. The title font has upper case,
+ * digits, space and . - ! only; an even length centres exactly.
+ */
+#define DABBIT_VERSION "1.0.0"
+#define VERSION "DABBIT EDITION " DABBIT_VERSION
 
 #define DEFAULT_FLAGS "IVIAAVCAKACAAAAAAAAAAEAA"
 #define CHEST_COUNT 31

@@ -192,8 +192,12 @@ class Interface {
         this.title.src = 'logo.png';
         this.title.alt = 'Dragon Warrior Randomizer';
         this.appContainer.append(this.title);
+        // this fork's mark under the logo; placed by .dabbit-mark in index.css
+        this.mark = this.create('div', 'dabbit edition');
+        this.mark.className = 'dabbit-mark';
+        this.appContainer.append(this.mark);
         this.subHeader = this.create('h3', null, {
-            'margin-top': '0.2em'
+            'margin-top': '1.6em'   // room for the mark above it
         });
         this.appContainer.append(this.subHeader);
 
@@ -590,7 +594,8 @@ class Interface {
      * @param version The version number
      */
     setVersion(version) {
-        this.subHeader.innerText = 'Version ' + version;
+        // the version names itself ("DABBIT FORK V1.0.0"), so no prefix
+        this.subHeader.innerText = version;
         document.title = 'DWRandomizer ' + version;
     }
 
