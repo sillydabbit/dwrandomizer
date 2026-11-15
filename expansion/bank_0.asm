@@ -28,6 +28,9 @@ STEP_COUNT    EQU $6804 ; step counter, 16-bit LE
 ITEM_ADD_ID   EQU $6806 ; the item id being added, captured by stash_and_add
                         ; before b3_e01b destroys it. Transient - written and
                         ; read back within a single call, never persisted.
+TABLET_LIT    EQU $6807 ; nonzero while light supplied by Tablet Cave is in
+                        ; effect - see tablet_torch_radius. The stats work
+                        ; uses SRAM up to $6806.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks
