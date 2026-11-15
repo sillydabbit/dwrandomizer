@@ -1679,6 +1679,17 @@ static void spike_rewrite(dw_rom *rom)
         );
 }
 
+/* must match A7_GUARDS in expansion/bank_0.asm */
+#define A7_GUARDS_MAX 32
+
+/* Oops All Treasure Guards' guard table: four arrays of A7_GUARDS_MAX - map,
+ * x, y, enemy - at $bf00 in expansion bank 3, which is expansion offset 0x3f00.
+ * Must match the .org above a7_guard_map in expansion/exp_bank_3.asm. */
+#define A7_GUARD_MAP     (0xbf00 - 0x8000)
+#define A7_GUARD_X       (A7_GUARD_MAP + A7_GUARDS_MAX)
+#define A7_GUARD_Y       (A7_GUARD_X + A7_GUARDS_MAX)
+#define A7_GUARD_MONSTER (A7_GUARD_Y + A7_GUARDS_MAX)
+
 /**
  * Determines if an item should be guarded when "treasure guards" is on
  *
@@ -1747,6 +1758,95 @@ static void treasure_guards(dw_rom *rom)
             spike_entry++;
         }
     }
+}
+
+/**
+ * Puts a guard on every chest, apart from the ones that must stay unguarded.
+ *
+ * Treasure Guards only has room for 5 guards: the forced encounter table has 8
+ * slots, 3 of them vanilla, and a beaten guard is remembered in one of the 5
+ * spare bits of the quest progress byte. This fills a separate table of
+ * A7_GUARDS guards instead, remembers each one in its own byte of battery RAM,
+ * and points the three routines that read the forced encounter table at
+ * replacements that check both tables.
+ *
+ * Takes over from Treasure Guards when both are set: it runs afterwards and
+ * clears the slots Treasure Guards filled, leaving that function untouched.
+ *
+ * Never guarded:
+ *   - the chests in Tantegel's throne room, where the game starts
+ *   - the Staff of Rain chest. The old man takes the Silver Harp before it can
+ *     be opened, so dying to its guard would force the harp to be found again
+ *   - any tile that already has a forced encounter
+ *
+ * @param rom The rom struct
+ */
+static void oops_all_treasure_guards(dw_rom *rom)
+{
+    size_t i, j, count = 0;
+    dw_chest *chest = rom->chests;
+    dwr_spike_table *spike = rom->spike_table;
+    dwr_search_table *search = rom->search_table;
+    uint8_t spots[CHEST_COUNT + 3][3];
+
+    if (!OOPS_ALL_TREASURE_GUARDS(rom))
+        return;
+
+    printf("Guarding every chest...\n");
+
+    /* take back any slots Treasure Guards filled */
+    for (i=3; i < 8; i++)
+        spike->map[i] = NO_MAP;
+
+    for (i=0; i < CHEST_COUNT; i++) {
+        if (chest[i].map == TANTEGEL_THRONE_ROOM || chest[i].item == STAFF)
+            continue;
+        spots[count][0] = chest[i].map;
+        spots[count][1] = chest[i].x;
+        spots[count][2] = chest[i].y;
+        count++;
+    }
+    /* every search spot, whatever it holds */
+    for (i=0; i < 3; i++) {
+        spots[count][0] = search->map[i];
+        spots[count][1] = search->x[i];
+        spots[count][2] = search->y[i];
+        count++;
+    }
+
+    j = 0;
+    for (i=0; i < count; i++) {
+        /* a tile that is already a forced encounter keeps that encounter */
+        if ((spots[i][0] == spike->map[0] && spots[i][1] == spike->x[0]
+                    && spots[i][2] == spike->y[0])
+                || (spots[i][0] == spike->map[1] && spots[i][1] == spike->x[1]
+                    && spots[i][2] == spike->y[1])
+                || (spots[i][0] == spike->map[2] && spots[i][1] == spike->x[2]
+                    && spots[i][2] == spike->y[2]))
+            continue;
+        if (j >= A7_GUARDS_MAX) {
+            printf("Warning: more guarded spots than guard slots\n");
+            break;
+        }
+        rom->expansion[A7_GUARD_MAP + j] = spots[i][0];
+        rom->expansion[A7_GUARD_X + j] = spots[i][1];
+        rom->expansion[A7_GUARD_Y + j] = spots[i][2];
+        do {
+            rom->expansion[A7_GUARD_MONSTER + j] = mt_rand(WYVERN, WIZARD);
+        } while (rom->expansion[A7_GUARD_MONSTER + j] == GOLEM);
+        j++;
+    }
+
+    add_hook(rom, JMP, 0xcd51, A7_SPIKE_START);
+    add_hook(rom, JMP, 0xe8d4, A7_SPIKE_RAN);
+    add_hook(rom, JMP, 0xe96b, A7_SPIKE_WON);
+
+    /* A guard can start a battle in a town, which vanilla never does, and
+     * start_combat freezes the NPCs without finishing their steps, leaving
+     * them out of step with the clock for good. Finish their steps at the
+     * freeze itself - 6 bytes out, 3 in, 3 padded. */
+    add_hook(rom, JSR, 0xe576, A7_NPC_FREEZE);
+    nop(rom, 0xe579, 3);
 }
 
 /**
@@ -2314,6 +2414,7 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
      * from the contents the player will actually find. */
     guarantee_gold_chest(&rom);
     treasure_guards(&rom);
+    oops_all_treasure_guards(&rom);
     sorted_inventory(&rom);
     summer_sale(&rom);
     modify_run_rate(&rom);

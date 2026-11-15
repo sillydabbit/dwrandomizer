@@ -86,7 +86,7 @@
 #define TABLET_CAVE_TORCH(x)      (x->flags[ 2] & 0x30)
 #define PERMANENT_RADIANT(x)      (x->flags[ 2] & 0x03)
 #define GUARANTEED_GOLD(x)        (x->flags[ 6] & 0x03)
-#define UNUSED_830                (x->flags[ 8] & 0x30)
+#define OOPS_ALL_TREASURE_GUARDS(x) (x->flags[ 8] & 0x30)
 #define UNUSED_110C               (x->flags[11] & 0x0c)
 #define UNUSED_1103               (x->flags[11] & 0x03)
 #define UNUSED_1402               (x->flags[14] & 0x02)

@@ -11,6 +11,11 @@ enum hooktype {
 };
 
 enum subroutine {
+  A7_CALL = 0xC890,
+  A7_NPC_FREEZE = 0xC82C,
+  A7_SPIKE_RAN = 0xC846,
+  A7_SPIKE_START = 0xC818,
+  A7_SPIKE_WON = 0xC884,
   BLOCKED_IN_FRONT = 0xC2D5,
   CAPTURE_WIN_LEVEL = 0xC441,
   COUNT_ENCOUNTER = 0xC30A,

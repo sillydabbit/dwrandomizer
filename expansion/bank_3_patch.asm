@@ -472,6 +472,115 @@ exp_dispatch:
 
 .org $c7ec
     ; potentially unused data
+
+.org $c818             ; clear of the "BEGIN A NEW QUEST" window, which dwr.c
+                       ; writes over $c7ec-$c814
+
+; *** Oops All Treasure Guards ***
+; The guard table, both lookups and the NPC settle loop live in expansion
+; bank 3 - see exp_a7_lookup there. These are the footholds in the bank that is
+; always mapped in. Each one saves Y, which the code it replaces never touched,
+; switches to expansion bank 3 through a7_call, and carries on where the
+; original did. The expansion routines answer in X, because the bank restore
+; ends with "lda $7004" and so destroys A and the flags.
+
+a7_spike_start:        ; replaces the check at $cd51, run after each step
+    tya
+    pha
+    ldy #0             ; exp_a7_lookup: X = the enemy to fight, or $ff
+    jsr a7_call
+    pla
+    tay
+    cpx #$ff
+    beq @done
+    txa
+    jmp $e4df          ; start_combat, A = enemy
+@done:
+    jmp $cda2          ; where the original check continues
+
+a7_npc_freeze:         ; replaces "lda $8d / ora #$80 / sta $8d" at $e576, in
+                       ; start_combat. It runs for every battle while the flag
+                       ; is on, so it only settles when the map has NPCs: the
+                       ; map loader sets $8d to $ff when there are none. Why it
+                       ; is needed at all is at exp_a7_npc_settle.
+    lda $8d
+    cmp #$ff
+    beq @freeze
+    txa                ; start_combat's caller may not expect X or Y to change
+    pha
+    tya
+    pha
+    ldy #2             ; exp_a7_npc_settle
+    jsr a7_call
+    pla
+    tay
+    pla
+    tax
+@freeze:
+    lda $8d            ; the three instructions this replaced, so A and the
+    ora #$80           ; flags come back exactly as start_combat left them
+    sta $8d
+    rts
+
+a7_spike_ran:          ; replaces the check at $e8d4, after running from a battle
+    tya
+    pha
+    ldy #0             ; exp_a7_lookup: $ff unless an unbeaten guard is here
+    jsr a7_call
+    pla
+    tay
+    cpx #$ff
+    beq @done
+    jsr $c6bb          ; from here to the jmp is spike_rewrite's own code: put
+    lda $dc            ; the player back on the tile they came from. It stays
+    sta $3a            ; in this bank because $b097 is in the game's own
+    sta $8e            ; switchable bank, which is mapped in only here.
+    sta $90
+    lda $dd
+    sta $3b
+    sta $8f
+    sta $92
+    lda #$00
+    sta $91
+    sta $93
+    ldx #$04
+-   asl $90
+    rol $91
+    asl $92
+    rol $93
+    dex
+    bne -
+    lda #$02
+    sta $602f
+    jmp $b097
+@done:
+    jmp $e940
+
+a7_spike_won:          ; replaces the loop at $e96b, after winning a battle
+    tya
+    pha
+    ldy #1             ; exp_a7_won: marks this tile's guard or encounter beaten
+    jsr a7_call
+    pla
+    tay
+    jmp $e98c          ; jsr count_win, then the rest of the victory code
+
+a7_call:               ; Y = 0 lookup, 1 won, 2 NPC settle. The same bank switch
+                       ; Progressive Equipment's a8_check does, and for the same
+                       ; reason: a slot in the $c288 dispatch table would move
+                       ; every routine after it. exp_a7_entry picks the routine
+                       ; by Y, and each ends with exp_load_last_bank, which
+                       ; switches back and returns to a7_call's caller.
+    lda $6004          ; the bank in use, for exp_load_last_bank
+    sta $7004
+    lda #3
+    jsr store_and_load_prg_bank
+    jmp exp_a7_entry
+
+; Progressive Equipment starts at $c960 in this same window.
+.if $ > $c960
+    .error "Oops All Treasure Guards has overrun $c960, where Progressive Equipment starts"
+.endif
 .org $c9b5
 
 .org $f232

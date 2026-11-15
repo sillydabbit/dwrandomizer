@@ -31,6 +31,11 @@ ITEM_ADD_ID   EQU $6806 ; the item id being added, captured by stash_and_add
 TABLET_LIT    EQU $6807 ; nonzero while light supplied by Tablet Cave is in
                         ; effect - see tablet_torch_radius. The stats work
                         ; uses SRAM up to $6806.
+A7_GUARDS     EQU 32    ; guard table capacity, see a7_spike_match
+A7_BEATEN     EQU $6808 ; one byte per guard, nonzero once beaten. $6808-$6827,
+                        ; inside the $672c-$682b range init_save_ram clears on
+                        ; New Game. The stats work uses up to $6806 and Tablet
+                        ; Cave Torch uses $6807.
 
 .db "NES", $1a
 .db 8  ; PRG ROM banks
