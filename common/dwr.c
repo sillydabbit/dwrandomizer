@@ -15,6 +15,7 @@
 #include "dungeon_maps.h"
 #include "stair_shuffle.h"
 #include "chests.h"
+#include "spoiler.h"
 #include "challenge.h"
 #include "crc64.h"
 #include "mt64.h"
@@ -916,7 +917,21 @@ static void update_title_screen(dw_rom *rom)
 
     pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
     pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
-    pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
+    /* A plain word for anyone watching: this ROM has a spoiler log, so it is
+     * not the race game. It costs 11 bytes more than a blank line, which
+     * exactly fills the title space with a 20-digit seed (0 to spare). An
+     * even length, so it centres exactly on the 32-tile row; "SPOILER"
+     * sat half a tile left. */
+    if (SPOILER_LOG(rom)) {
+        pos = center_title_text(pos, "SPOILERS");
+        /* Colour it like RANDOMIZER. 0x3fc4 is the attribute byte for tile
+         * rows 20-23 in the title data (f7 08 ff = 8 x 0xff); its high
+         * nibble covers rows 22-23, where SPOILERS is. 0xff -> 0xaf moves
+         * those rows from palette 3 to palette 2, the one RANDOMIZER's row
+         * uses (0x3fc1, 0xa5); the version on row 20 keeps palette 3. */
+        vpatch(rom, 0x3fc4, 1, 0xaf);
+    } else
+        pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
     pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
 
     pos = center_title_text(pos, (const char *)rom->flags_encoded); /* flags */
@@ -2513,6 +2528,18 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     }
     rom.seed = seed;
 
+    /* The spoiler log deliberately changes the game. Burning a draw here
+     * shifts every later one, so the same seed with the flag on is a
+     * different - but still reproducible - randomization, and nobody can
+     * turn the log on to read the answers for a seed meant to be played
+     * without it. Do NOT replace this with mt_init(seed ^ SALT): the salt
+     * would be public, and generating seed^SALT with the flag on would hand
+     * back the original game with an accurate spoiler. No seed initialises
+     * the generator into an already-advanced state, so this has no inverse.
+     * It runs after dwr_init(), which is where the flags are parsed. */
+    if (SPOILER_LOG((&rom)))
+        mt_rand(0, 0xffff);
+
     /* Clear the unused code so we can make sure it's unused */
 #ifdef CLEAR_ALL_UNUSED_DATA
     memset(&rom.content[0x1314], 0xff, 0x1332 - 0x1314);
@@ -2610,6 +2637,21 @@ uint64_t dwr_randomize(const char* input_file, uint64_t seed, char *flags,
     printf("Checksum: %016"PRIx64"\n", crc);
     if (!dwr_write(&rom, output_file)) {
         return 0;
+    }
+    if (SPOILER_LOG((&rom))) {
+        /* Written last, so it reports the chests, search spots and locations
+         * the player will actually find - open_charlock() and no_keys() both
+         * rewrite chest contents late in the run above. */
+        char spoiler_file[1025] = { 0 };
+
+        snprintf(spoiler_file, 1024, "%s/DWRando.%"PRIu64".%s.spoiler.txt",
+                output_dir, seed, flags);
+        if (dwr_write_spoiler(&rom, crc, spoiler_file)) {
+            printf("Wrote spoiler log to %s\n", spoiler_file);
+        } else {
+            fprintf(stderr, "Unable to write the spoiler log to %s\n",
+                    spoiler_file);
+        }
     }
     free(rom.header);
     free(rom.expansion);
