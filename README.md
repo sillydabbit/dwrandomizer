@@ -31,8 +31,8 @@ Armor first - and neither will ever be in the Tantegel Throne Room.
 #### Oops All Treasure Guards ####
 *Challenge tab*
 
-Treasure Guards, turned all the way up: almost every chest and search spot that holds a treasure
-gets a mid-level monster guarding it, not just the important ones. Step on the tile and you fight.
+Treasure Guards, turned all the way up: chests and search spots with items will have a mid-level
+monster guarding them, not just the important ones. Step on the tile and you fight.
 Beat a guard and it stays beaten; run away and you're put back on the tile you came from.
 
 Never guarded: the chests in Tantegel's Throne Room (where you start), the Staff of Rain chest, and
