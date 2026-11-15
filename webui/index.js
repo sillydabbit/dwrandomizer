@@ -221,7 +221,7 @@ function setup_ui() {
     ui.addTriOption('Challenge',  1, 13, 0, 'Treasure Guards',
         'Important items will have a mid-level monster guarding them.');
     ui.addTriOption('Challenge', 10,  8, 4, 'Oops All Treasure Guards',
-        'Almost all chests and search spots will have a mid-level monster ' +
+        'Chests and search spots with items will have a mid-level monster ' +
         'guarding them.');
     ui.addTriOption('Challenge',  3, 10, 0, 'Big Swamp',
         'Approximately 60% of the overworld will be poisonous swamp.');
