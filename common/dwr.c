@@ -835,61 +835,74 @@ static void update_enemy_hp(dw_rom *rom)
     rom->enemies[DRAGONLORD_2].hp -= mt_rand(0, 15);
 }
 
-/**
- * Centers new text on the title screen
+/*
+ * The randomizer's part of the title screen: 13 rows of 32 tiles under the
+ * logo, from content 0x3f26 up to the attribute data at 0x3fb5 - 143 bytes.
  *
- * @param pos A pointer to the rom data where the patched in text should go.
- *      This should be the beginning of a line.
- * @param text The text to place on the screen. Keep in mind the title screen
- *      character set does not contain lower case characters.
- * @return A pointer to the end of the patch.
+ * The game's decoder ($bd81 in bank 0) writes tiles to the screen one after
+ * another: "f7 N T" is N copies of tile T, 0xfc stops once the PPU address
+ * reaches $2400 and is skipped before that, and any other byte is one tile.
+ * Rows are not part of the format, so the blank space between two lines of
+ * text is one run however many rows it spans.
  */
-static uint8_t *center_title_text(uint8_t *pos, const char *text)
+#define TITLE_START  0x3f26
+#define TITLE_END    0x3fb5
+#define TITLE_ROWS   13
+#define TITLE_WIDTH  32
+#define TITLE_BLANK  0x5f
+#define TITLE_RUN    0xf7
+#define TITLE_SKIP   0xfc
+
+/**
+ * Centres a line of text on one row of the title screen.
+ *
+ * @param tiles The title screen's tiles, TITLE_ROWS rows of TITLE_WIDTH.
+ * @param row The row to put the text on.
+ * @param text The text. The title font has no lower case; anything it cannot
+ *      draw becomes a blank, and anything past 32 characters is cut.
+ */
+static void title_line(uint8_t *tiles, int row, const char *text)
 {
-    uint8_t len, space, dw_text[34];
+    uint8_t dw_text[TITLE_WIDTH + 1] = { 0 };
+    size_t len = MIN(strlen(text), TITLE_WIDTH);
 
-    strncpy((char*)dw_text, text, 33);
-
+    memcpy(dw_text, text, len);
     ascii2dw_title(dw_text);
-    len = strlen(text);
-    space = 32 - len;
-    if (space)
-        pos = pvpatch(pos, 3, 0xf7, space/2, 0x5f);
-    pos = ppatch(pos, len, dw_text);
-    if (space)
-        pos = pvpatch(pos, 4, 0xf7, (space+1)/2, 0x5f, 0xfc);
-
-    return pos;
+    memcpy(&tiles[row * TITLE_WIDTH + (TITLE_WIDTH - len) / 2], dw_text, len);
 }
 
 /**
- * Adds extra padding to the title screen if needed to make sure we fill the
- * space.
+ * Writes the title screen's tiles into the rom as compactly as the decoder
+ * allows: any run of 4 or more of one tile as "f7 N T", the rest one byte per
+ * tile, and what is left of the space filled with 0xfc, which the decoder
+ * skips until the attribute data that follows has been drawn.
  *
- * @param pos The current position of the title screen pointer.
- * @param end The end of the title screen space.
- * @param reserved Space to reserve for other text.
- *
- * @return A pointer to the end of the new data
+ * @return FALSE if the tiles do not fit, which cannot happen with lines of 32
+ *      characters or less (the worst case uses about 120 of the 143 bytes).
  */
-static uint8_t *pad_title_screen(uint8_t *pos, uint8_t *end, int reserved)
+static BOOL title_write(dw_rom *rom, const uint8_t *tiles)
 {
-    char text[32];
-    int needed;
+    uint8_t *pos = &rom->content[TITLE_START];
+    uint8_t *end = &rom->content[TITLE_END];
+    size_t i = 0, run, count = TITLE_ROWS * TITLE_WIDTH;
 
-    needed = MIN(end - pos - reserved - 1, 32);
-    if (needed < 0) {
-        printf("An unexpected error occurred while updating the title "
-                       "screen!\n");
+    while (i < count) {
+        for (run=1; i + run < count && run < 255
+                && tiles[i + run] == tiles[i]; run++);
+        if (run >= 4) {
+            if (end - pos < 3)
+                return FALSE;
+            pos = pvpatch(pos, 3, TITLE_RUN, run, tiles[i]);
+        } else {
+            if (end - pos < (ptrdiff_t)run)
+                return FALSE;
+            pos = ppatch(pos, run, &tiles[i]);
+        }
+        i += run;
     }
-    memset(text, 0x5f, 32);
-    if (needed < 32) {
-        needed -= 3;
-        pos = pvpatch(pos, 3, 0xf7, 32 - needed, 0x5f);
-    }
-    pos = ppatch(pos, needed, (uint8_t*)text);
-    pos = pvpatch(pos, 1, 0xfc);
-    return pos;
+    while (pos < end)
+        *pos++ = TITLE_SKIP;
+    return TRUE;
 }
 
 /**
@@ -899,34 +912,20 @@ static uint8_t *pad_title_screen(uint8_t *pos, uint8_t *end, int reserved)
  */
 static void update_title_screen(dw_rom *rom)
 {
-    unsigned char text[33] = { 0 };
-    uint8_t *pos, *end;
-
-    pos = &rom->content[0x3f26];
-    end = &rom->content[0x3fb5];
-    text[32] = '\0';
+    uint8_t tiles[TITLE_ROWS * TITLE_WIDTH];
+    char seed[21];
 
     printf("Updating title screen...\n");
-    pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
-    pos = center_title_text(pos, "RANDOMIZER");  /* RANDOMIZER text */
-    pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
-    pos = center_title_text(pos, VERSION);       /* version number */
+    memset(tiles, TITLE_BLANK, sizeof(tiles));
+    title_line(tiles, 1, "RANDOMIZER");
+    title_line(tiles, 3, VERSION);
+    title_line(tiles, 8, (const char *)rom->flags_encoded);
+    snprintf(seed, sizeof(seed), "%"PRIu64, rom->seed);
+    title_line(tiles, 10, seed);
 
-    pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
-    pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
-    pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
-    pos = pvpatch(pos, 4, 0xf7, 32, 0x5f, 0xfc); /* blank line */
-
-    pos = center_title_text(pos, (const char *)rom->flags_encoded); /* flags */
-    snprintf((char *)text, 33, "%"PRIu64, rom->seed);
-
-     /* blank line */
-    pos = pad_title_screen(pos, end, 15 + strlen((const char *)text));
-    pos = center_title_text(pos, (const char*)text);  /* seed number */
-    pos = pad_title_screen(pos, end, 4); /* blank line */
-    pos = pad_title_screen(pos, end, 0); /* blank line */
-
-    // 0x3fc5
+    if (!title_write(rom, tiles))
+        printf("An unexpected error occurred while updating the title "
+                "screen!\n");
 }
 
 
