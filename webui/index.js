@@ -229,9 +229,8 @@ function setup_ui() {
     ui.addTriOption('Challenge',  9, 10, 6, "Easy Charlock",
         "Make it slightly easier to run from high level monsters.");
     ui.addTriOption('Challenge',  8, 11, 2, "Progressive Equipment",
-        "Every weapon, armor and shield is sold somewhere, but each can only " +
-        "be bought while wearing the one below it. Erdrick's Sword and Armor " +
-        "need the Flame Sword and Magic Armor.");
+        "Equipment must be acquired in order. Erdrick's gear will never " +
+        "appear in the Throne Room.");
 
     ui.addTriOption('Cosmetic',  4, 11, 6, 'Modern Spell Names',
         'Use spell names from more recent DQ releases.');
