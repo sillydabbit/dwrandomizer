@@ -20,6 +20,31 @@ body {
    filter: drop-shadow(2px 2px 1px #aaa);
 }
 
+/* "dabbit edition" under the logo. Annifont by Annie de la Vega,
+ * freeware, non-commercial (fontspace.com/annifont-font-f279). */
+@font-face {
+    font-family: 'Annifont';
+    src: url('annifont.ttf') format('truetype');
+}
+
+/* A zero-height line right after the logo, so it moves nothing else. Its
+ * text is centred 120px left of the logo's centre - midway between the D of
+ * DRAGON (x 0) and the R of RANDOMIZER (x 357) in the 597px logo - and 60px
+ * below the logo's top (the logo is 70px tall). */
+.dabbit-mark {
+    position: relative;
+    height: 0;
+    top: -10px;
+    left: -120px;
+    text-align: center;
+    white-space: nowrap;
+    pointer-events: none;
+    font: 36px/1 'Annifont', cursive;
+    color: #0ee4de;
+    text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000,
+            -1px 1px 0 #000;
+}
+
 h1, h3 {
     text-align: center;
 }
