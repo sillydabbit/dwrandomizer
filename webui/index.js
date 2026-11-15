@@ -220,6 +220,9 @@ function setup_ui() {
         'All NPCs will be invisible.');
     ui.addTriOption('Challenge',  1, 13, 0, 'Treasure Guards',
         'Important items will have a mid-level monster guarding them.');
+    ui.addTriOption('Challenge', 10,  8, 4, 'Oops All Treasure Guards',
+        'Almost all chests and search spots will have a mid-level monster ' +
+        'guarding them.');
     ui.addTriOption('Challenge',  3, 10, 0, 'Big Swamp',
         'Approximately 60% of the overworld will be poisonous swamp.');
     ui.addTriOption('Challenge',  5, 10, 2, 'Randomly Rotate/Mirror Dungeons',
