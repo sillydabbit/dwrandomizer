@@ -1,9 +1,10 @@
 # Dragon Warrior Randomizer - dabbit edition #
 
 This is an unofficial fork of [mcgrew's Dragon Warrior Randomizer](https://github.com/mcgrew/dwrandomizer),
-built on its 3.0.4 code. It adds a few new options, a spoiler log with an optional map and a
-bigger end-of-game stats screen, and keeps everything else from the main randomizer exactly as it
-was. If you want the official, tuned experience, use [dwrandomizer.com](https://dwrandomizer.com/release).
+built on its 3.0.4 code. It adds a few new options, a spoiler log with an optional map, 53 more
+hero sprites from the community and a bigger end-of-game stats screen, and keeps everything else
+from the main randomizer exactly as it was. If you want the official, tuned experience, use
+[dwrandomizer.com](https://dwrandomizer.com/release).
 
 **Play it here: [sillydabbit.github.io/dwrandomizer](https://sillydabbit.github.io/dwrandomizer/)**, or
 download the Windows app from the [latest release](https://github.com/sillydabbit/dwrandomizer/releases/latest).
@@ -134,3 +135,6 @@ Please don't report dabbit edition problems to the main randomizer.
 
 Built on the work of **mcgrew** and the Dragon Warrior Randomizer contributors. The "dabbit
 edition" lettering uses **Annifont** by Annie de la Vega (freeware, non-commercial).
+
+The 53 hero sprites added in this edition are by **Angel FM**, **sillydabbit**, **Zatrex17**,
+**Dwedit** and **HoodyTwoShoes** - thank you. Most were made with **Avodroc42**'s sprite tool.
