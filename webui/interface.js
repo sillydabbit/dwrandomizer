@@ -252,13 +252,14 @@ class Interface {
         this.tabContainer = this.create('tabcontainer');
         this.appContainer.append(this.tabContainer);
         this.tabs = {};
+        // The checksum shares the Randomize! row (left of the button) rather
+        // than adding a row under it, so showing it never makes the page
+        // taller - the desktop window is sized to fit the options exactly.
         let goContainer = this.create('div', null, {
-            'text-align': 'right',
+            'display': 'flex',
+            'align-items': 'center',
             'padding-top': '0.5em'
         });
-        this.goButton = this.create('button', 'Randomize!');
-        goContainer.append(this.goButton);
-        this.appContainer.append(goContainer);
         this.checksumHolder = this.create('input');
         this.checksumHolder.readOnly = true;
         this.checksumButton = this.create('button', 'Copy');
@@ -266,7 +267,12 @@ class Interface {
         this.checksumContainer.append(this.checksumHolder);
         this.checksumContainer.append(this.checksumButton);
         this.checksumContainer.hide();
-        this.appContainer.append(this.checksumContainer);
+        goContainer.append(this.checksumContainer);
+        this.goButton = this.create('button', 'Randomize!', {
+            'margin-left': 'auto'
+        });
+        goContainer.append(this.goButton);
+        this.appContainer.append(goContainer);
         this.initEvents();
         this.readHash();
         Interface.instance = this;
