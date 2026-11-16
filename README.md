@@ -1,14 +1,14 @@
 # Dragon Warrior Randomizer - dabbit edition #
 
 This is an unofficial fork of [mcgrew's Dragon Warrior Randomizer](https://github.com/mcgrew/dwrandomizer),
-built on its 3.0.4 code. It adds a few new options, a spoiler log and a bigger end-of-game stats
-screen, and keeps everything else from the main randomizer exactly as it was. If you want the
-official, tuned experience, use [dwrandomizer.com](https://dwrandomizer.com/release).
+built on its 3.0.4 code. It adds a few new options, a spoiler log with an optional map and a
+bigger end-of-game stats screen, and keeps everything else from the main randomizer exactly as it
+was. If you want the official, tuned experience, use [dwrandomizer.com](https://dwrandomizer.com/release).
 
 **Play it here: [sillydabbit.github.io/dwrandomizer](https://sillydabbit.github.io/dwrandomizer/)**, or
 download the Windows app from the [latest release](https://github.com/sillydabbit/dwrandomizer/releases/latest).
 The new options are mixed into the tabs where they fit best (Features, Shortcuts, Challenge,
-Cosmetic). The title screen of every ROM it makes reads `DABBIT EDITION 1.0.0`.
+Cosmetic). The title screen of every ROM it makes reads `DABBIT EDITION 1.1.0`.
 
 For races, have everyone generate their seed on the same site - a ROM from this edition and one
 from the main randomizer won't match once any of the new options is on. Compare checksums before
@@ -73,6 +73,22 @@ tiles. Handy for practice, testing, or settling "where was the harp?".
 It's built so it can't be used to cheat a race: a seed with the spoiler log on is a **different
 game** from the same seed with it off (different checksum), the title screen says **SPOILERS**,
 and the option is part of the flags, so it shows up in shared links.
+
+#### Generate Map ####
+*Cosmetic tab, needs Spoiler Log*
+
+Also downloads `DWRando.<seed>.<flags>.map.png` with the spoiler log. It shows the whole overworld
+in the game's own graphics:
+
+- every castle, town and cave labeled, along with what's behind it;
+- each encounter zone numbered, with a key of its monsters;
+- the search spot circled with its coordinates.
+
+The seed, flags and checksum are printed along the bottom.
+
+It's greyed out until Spoiler Log is ticked, and off by default. It's a setting, not a flag, so it
+doesn't change the seed, the checksum or shared links. The map is only ever drawn for the ROM you
+just generated, and only if that ROM was made with the spoiler log on.
 
 #### Expanded stats screen ####
 *Always on*
