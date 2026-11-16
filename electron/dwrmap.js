@@ -1,0 +1,1 @@
+../build/release/dwrmap.js

@@ -107,6 +107,11 @@ div.description {
     color: #666;
 }
 
+/* Generate Map while Spoiler Log is off */
+.option-disabled {
+    opacity: 0.45;
+}
+
 @media (prefers-color-scheme: dark) {
     body {
         background-color: #111;

@@ -25,6 +25,25 @@ require('interface.js');
 require('dwrandomizer.js');
 require('base32.js');
 
+/*
+ * The spoiler map - dabbit edition only. dwrmap.js is built from a separate,
+ * closed-source project and copied in at deploy time; it is not part of this
+ * repository, and this hook is not meant for upstream. When it is
+ * missing, the Generate Map option stays hidden and nothing else changes. The
+ * module draws only spoiler-log ROMs, and it is only ever handed the ROM this
+ * page has just generated.
+ */
+let dwrmap = null;
+require('dwrmap.js').addEventListener('load', () => {
+    if (typeof createDwrmap !== 'function')
+        return;
+    createDwrmap().then(module => {
+        dwrmap = module;
+        if (window.ui && ui.mapOption)
+            ui.mapOption.sync();
+    }, err => console.error('dwrmap failed to load:', err));
+});
+
 let rom; let sprite_choices = [];
 let log = ''
 let error = ''
@@ -110,6 +129,21 @@ class Rom extends Uint8Array {
             let spoiler = FS.readFile('/'+spoilerName);
             FS.unlink('/'+spoilerName);
             Rom.download(spoiler, spoilerName);
+            if (ui.mapOption.wanted())
+                this.saveMap();
+        }
+    }
+
+    /**
+     * Saves the overworld map of the ROM just generated, beside its spoiler
+     * log. The map module refuses anything but a spoiler-log ROM.
+     */
+    saveMap() {
+        try {
+            let png = dwrmap.spoilerMap(this.output);
+            Rom.download(png, this.outname.replace(/\.nes$/, '.map.png'));
+        } catch (err) {
+            console.error('No map was generated: ' + err.message);
         }
     }
 
@@ -129,6 +163,39 @@ class Rom extends Uint8Array {
         downloader.click();
         URL.revokeObjectURL(url);
     }
+}
+
+/**
+ * Adds Generate Map under Spoiler Log. It is a saved setting, not a flag: it
+ * never changes the flags, the seed or the ROM. Greyed out while Spoiler Log
+ * is off; hidden when dwrmap.js is not present.
+ *
+ * @param spoilerLog The Spoiler Log checkbox
+ */
+function addMapOption(spoilerLog) {
+    let input = ui.addOption('Cosmetic', 10, null, null, 'Generate Map',
+        'Generates a PNG of the overworld map with caves, towns, the ' +
+        'search spot and zones highlighted.', false, true);
+    let container = ui.tabs['Cosmetic'].content.children[10];
+    input.checked = localStorage.getItem('generateMap') === 'true';
+    input.change(() => localStorage.setItem('generateMap', input.checked));
+
+    let option = {
+        sync() {
+            container.style.visibility = dwrmap ? '' : 'hidden';
+            input.disabled = !spoilerLog.checked;
+            container.classList.toggle('option-disabled', input.disabled);
+        },
+        wanted() {
+            return !!dwrmap && spoilerLog.checked && input.checked;
+        }
+    };
+    spoilerLog.change(option.sync);
+    // flags typed in, or read from the URL, can turn Spoiler Log on or off
+    let updateInputs = ui.updateInputs.bind(ui);
+    ui.updateInputs = () => { updateInputs(); option.sync(); };
+    ui.mapOption = option;
+    option.sync();
 }
 
 /**
@@ -271,9 +338,10 @@ function setup_ui() {
         'Prevents the screen from flashing when you cast spells.', true);
     ui.addOption   ('Cosmetic',   6, 14, 4, 'Show Death Counter',
         'The stats window will also have a death counter.');
-    ui.addOption   ('Cosmetic',   8, 14, 0, 'Spoiler Log',
+    let spoilerLog = ui.addOption('Cosmetic', 8, 14, 0, 'Spoiler Log',
         'Generates a spoiler log for the seed. Changes the checksum and ' +
         'adds a SPOILERS header to the title screen.');
+    addMapOption(spoilerLog);
     ui.addOption   ('Cosmetic',   3, 14, 3, 'Allow Custom Spell Names',
         'Allow spell names to be changed based on the chosen sprite.', true);
     ui.addOption   ('Cosmetic',   5, 14, 2, 'Skip Original Credits',
