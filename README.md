@@ -99,7 +99,7 @@ manner.
 
 #### Alternate player sprites ####
 
-Over 60 alternate sprites to choose from for the main character.
+Over 130 alternate sprites to choose from for the main character.
 
 #### Other changes ####
 The Death Necklace is always available in a chest. Putting it on gives you 
