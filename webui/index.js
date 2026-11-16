@@ -174,8 +174,8 @@ class Rom extends Uint8Array {
  */
 function addMapOption(spoilerLog) {
     let input = ui.addOption('Cosmetic', 10, null, null, 'Generate Map',
-        'Generates a PNG of the overworld map with caves, towns, the ' +
-        'search spot and zones highlighted.', false, true);
+        'Generates a PNG of the map with labeled caves, towns, and zones.',
+        false, true);
     let container = ui.tabs['Cosmetic'].content.children[10];
     input.checked = localStorage.getItem('generateMap') === 'true';
     input.change(() => localStorage.setItem('generateMap', input.checked));
@@ -339,8 +339,8 @@ function setup_ui() {
     ui.addOption   ('Cosmetic',   6, 14, 4, 'Show Death Counter',
         'The stats window will also have a death counter.');
     let spoilerLog = ui.addOption('Cosmetic', 8, 14, 0, 'Spoiler Log',
-        'Generates a spoiler log for the seed. Changes the checksum and ' +
-        'adds a SPOILERS header to the title screen.');
+        'Changes the checksum and adds a SPOILERS header to the title ' +
+        'screen.');
     addMapOption(spoilerLog);
     ui.addOption   ('Cosmetic',   3, 14, 3, 'Allow Custom Spell Names',
         'Allow spell names to be changed based on the chosen sprite.', true);
