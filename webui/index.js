@@ -260,8 +260,8 @@ function setup_ui() {
     ui.addOption   ('Cosmetic',   6, 14, 4, 'Show Death Counter',
         'The stats window will also have a death counter.');
     ui.addOption   ('Cosmetic',   8, 14, 0, 'Spoiler Log',
-        'Generates a spoiler log for the seed. Changes the checksum and ' +
-        'adds a SPOILERS header to the title screen.');
+        'Changes the checksum and adds a SPOILERS header to the title ' +
+        'screen.');
     ui.addOption   ('Cosmetic',   3, 14, 3, 'Allow Custom Spell Names',
         'Allow spell names to be changed based on the chosen sprite.', true);
     ui.addOption   ('Cosmetic',   5, 14, 2, 'Skip Original Credits',
