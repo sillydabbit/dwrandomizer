@@ -86,6 +86,18 @@ if (EMSCRIPTEN)
     file(CREATE_LINK ${CMAKE_SOURCE_DIR}/webui/sprites         ${CMAKE_BINARY_DIR}/release/sprites SYMBOLIC)
     add_custom_command(TARGET dwrandomizer POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/dwrandomizer.js ${CMAKE_BINARY_DIR}/release/)
     add_custom_command(TARGET dwrandomizer POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/dwrandomizer.wasm ${CMAKE_BINARY_DIR}/release/)
+    # The spoiler map (webui/index.js, "Generate Map"; dabbit edition only)
+    # comes from a separate, closed-source project as one prebuilt file. Pass
+    # its path to include it:
+    #   -DDWRMAP_JS=path/to/dwrmap.js
+    # Without it the site and the desktop app build as before, minus that option.
+    set(DWRMAP_JS "" CACHE FILEPATH "Prebuilt dwrmap.js for the spoiler map (optional)")
+    if (DWRMAP_JS)
+        if (NOT EXISTS "${DWRMAP_JS}")
+            message(FATAL_ERROR "DWRMAP_JS: ${DWRMAP_JS} does not exist")
+        endif()
+        add_custom_command(TARGET dwrandomizer POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy "${DWRMAP_JS}" ${CMAKE_BINARY_DIR}/release/dwrmap.js)
+    endif()
 else()
     add_executable(dwrandomizer cli/main.c ${SOURCE_FILES})
     target_link_libraries(dwrandomizer m)
