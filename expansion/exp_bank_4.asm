@@ -489,6 +489,12 @@ credits_data:
     .db INSTR_SET_PPU
     .word $22c8
     .db "Crumps Brother"
+    .db INSTR_SET_PPU
+    .word $2308
+    .db "juef          "
+    .db INSTR_SET_PPU
+    .word $2348
+    .db "sillydabbit   "
 
     .db INSTR_WAIT, 240
 
@@ -519,6 +525,41 @@ credits_data:
     .db INSTR_SET_PPU
     .word $2308
     .db "bunder2015    "
+    .db INSTR_SET_PPU
+    .word $2348
+    .db "Angel FM      "
+
+    .db INSTR_WAIT, 240
+
+    ; second SPRITE WORK page: the heading stays; rows 20-26 still hold
+    ; page one's names, so blank them (REPEAT_CHAR writes count + 1 tiles)
+    .db INSTR_SET_PPU
+    .word $2148
+    .db "Avodroc42     "
+    .db INSTR_SET_PPU
+    .word $2188
+    .db "Dwedit        "
+    .db INSTR_SET_PPU
+    .word $21c8
+    .db "Zatrex17      "
+    .db INSTR_SET_PPU
+    .word $2208
+    .db "HoodyTwoShoes "
+    .db INSTR_SET_PPU
+    .word $2248
+    .db "sillydabbit   "
+    .db INSTR_SET_PPU
+    .word $2288
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $22c8
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $2308
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $2348
+    .db INSTR_REPEAT_CHAR, 13, " "
 
 stats_data:
     .db INSTR_WAIT, 240
