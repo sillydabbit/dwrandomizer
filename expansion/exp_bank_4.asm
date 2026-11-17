@@ -1180,6 +1180,17 @@ nmi:
     sta PPUADDR
     lda #%00011010
     sta PPUMASK     ; enable rendering
+
+    ; Read the controller once a frame and discard it. Nothing here uses the
+    ; buttons, but flash carts (Everdrive) open their in-game menu by watching
+    ; the game read $4016, so without this the menu can't be reached here.
+    ldx #7          ; 8 reads (7..0); 7 is odd, so it also strobes high
+    stx $4016
+    sta $4016       ; strobe low: A is still %00011010 (even)
+-   lda $4016
+    dex
+    bpl -
+
     jsr famistudio_update
     pla
     tay
