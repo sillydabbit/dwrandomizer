@@ -490,11 +490,14 @@ credits_data:
     .word $22c8
     .db "Crumps Brother"
     .db INSTR_SET_PPU
+    ; Lines from here on are padded only as far as the text they overwrite
+    ; (rows 24 and 26 are blank when the credits start, on both the vanilla
+    ; and the skip-credits path). Re-check the padding if names move.
     .word $2308
-    .db "juef          "
+    .db "juef"
     .db INSTR_SET_PPU
     .word $2348
-    .db "sillydabbit   "
+    .db "sillydabbit"
 
     .db INSTR_WAIT, 240
 
@@ -527,7 +530,7 @@ credits_data:
     .db "bunder2015    "
     .db INSTR_SET_PPU
     .word $2348
-    .db "Angel FM      "
+    .db "Angel FM   "           ; covers "sillydabbit"
 
     .db INSTR_WAIT, 240
 
@@ -535,19 +538,19 @@ credits_data:
     ; page one's names, so blank them (REPEAT_CHAR writes count + 1 tiles)
     .db INSTR_SET_PPU
     .word $2148
-    .db "Avodroc42     "
+    .db "Avodroc42"             ; covers "Xarnax42"
     .db INSTR_SET_PPU
     .word $2188
-    .db "Dwedit        "
+    .db "Dwedit    "            ; covers "Ryuseishin"
     .db INSTR_SET_PPU
     .word $21c8
-    .db "Zatrex17      "
+    .db "Zatrex17"              ; covers "mcgrew"
     .db INSTR_SET_PPU
     .word $2208
-    .db "HoodyTwoShoes "
+    .db "HoodyTwoShoes"         ; covers "MisterHomes"
     .db INSTR_SET_PPU
     .word $2248
-    .db "sillydabbit   "
+    .db "sillydabbit"           ; covers "Invenerable"
     .db INSTR_SET_PPU
     .word $2288
     .db INSTR_REPEAT_CHAR, 13, " "
