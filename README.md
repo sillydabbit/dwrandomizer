@@ -119,6 +119,8 @@ These bugs from the main randomizer are fixed here:
 - **"searched" text glitch:** with Fast Text on, searching on a chest could print a cut-off line
   with a stray "4".
 - **NPCs could walk out of step** after a Treasure Guards fight in a town.
+- **Play Time hundredths:** the ending's Play Time could only show 59 of the 100 hundredths of a
+  second.
 - **Flash carts** (Everdrive) couldn't open their in-game menu on the credits and stats screens.
 
 ## Known Issues ##
