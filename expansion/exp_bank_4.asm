@@ -12,6 +12,7 @@
     NMI_FLAGS      .dsb 1
     RAW_CHAR_FLAG  .dsb 1
     PPUATTR_LEN    .dsb 1
+    LAST_NOTE      .dsb 2  ; pulse 1 and 2 notes seen by the last nmi
 .ende
 .enum $40
     PRODUCT
@@ -1192,6 +1193,29 @@ nmi:
     bpl -
 
     jsr famistudio_update
+
+    ; FamiStudio writes a pulse channel's period high byte ($4003/$4007) only
+    ; when it changes, since that write restarts the waveform. A flash cart's
+    ; in-game menu can restore that register wrong, and the pitch then stays
+    ; off until the song happens to change it. Whenever a pulse channel starts
+    ; a new note, write FamiStudio's own copy of the high byte back, so a wrong
+    ; value lasts until the next note at most. The restart lands on the note's
+    ; first frame.
+    ldx #1
+-   lda famistudio_chn_note,x
+    cmp LAST_NOTE,x
+    beq +
+    sta LAST_NOTE,x
+    txa
+    asl a
+    asl a
+    tay             ; 0 or 4: $4003 or $4007
+    lda famistudio_pulse1_prev,x
+    bmi +           ; $80: nothing written yet
+    sta $4003,y
++   dex
+    bpl -
+
     pla
     tay
     pla
