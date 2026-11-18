@@ -204,6 +204,13 @@ static int gold_mover_rank(dw_chest *chest)
  * consumed. Like chest_at(), "free" ignores the map: no two chests anywhere
  * share coordinates.
  *
+ * A key is never chosen. This runs after map generation, when need_rimuldar()
+ * has already decided where Rimuldar may go based on which caves hold a key
+ * (check_keys()), and turning that key into gold would leave the seed with no
+ * obtainable key. Gold and junk chests rank first, so a key could only be
+ * reached with none of those left anywhere; this makes that impossible rather
+ * than unlikely.
+ *
  * @param rom The rom struct
  */
 static BOOL move_chest_into_tantegel(dw_rom *rom, size_t mover, BOOL make_gold);
@@ -215,6 +222,8 @@ static void add_gold_chest_to_tantegel(dw_rom *rom)
     dw_chest *chest = rom->chests;
 
     for (i=0; i < CHEST_COUNT; i++) {
+        if (chest[i].item == KEY)
+            continue;
         rank = gold_mover_rank(&chest[i]);
         if (rank >= 0 && rank < best_rank) {
             best_rank = rank;
