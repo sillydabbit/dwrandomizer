@@ -1882,6 +1882,31 @@ static void progressive_equipment(dw_rom *rom)
 }
 
 /**
+ * Finishes every NPC's step before a Treasure Guards battle freezes them.
+ *
+ * A guarded chest in a town starts a battle while NPCs are walking, which the
+ * game never does on its own. start_combat freezes the NPCs by setting bit 7
+ * of $8d at $e576, and the end of the battle clears $8d without finishing
+ * anyone's step, so an NPC caught mid-step is drawn out of place and turns
+ * mid-step from then on.
+ *
+ * Oops All Treasure Guards has the same problem and already carries the fix:
+ * a7_npc_freeze (bank_3_patch.asm) settles every NPC through
+ * exp_a7_npc_settle in the expansion bank, then does the three instructions it
+ * replaced. It does not depend on the guard table, so plain Treasure Guards
+ * uses the same hook rather than its own copy in the fixed bank. Maps without
+ * NPCs ($8d is $ff) are skipped. Installing it twice, when both options are
+ * on, writes the same bytes.
+ *
+ * @param rom The rom struct
+ */
+static void settle_npcs_for_battle(dw_rom *rom)
+{
+    add_hook(rom, JSR, 0xe576, A7_NPC_FREEZE);
+    nop(rom, 0xe579, 3);
+}
+
+/**
  * Adds "spike" tiles to chests and search locations that should be guarded
  *
  * @param rom The rom struct
@@ -1897,6 +1922,7 @@ static void treasure_guards(dw_rom *rom)
         return;
 
     printf("Adding important treasure guards...\n");
+    settle_npcs_for_battle(rom);
 
     for (i=0; i < 2; i++){
         if (should_be_guarded(search->item[i])) {
