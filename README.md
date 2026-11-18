@@ -108,22 +108,22 @@ of the 100.
 ![SPELL / LEVEL / TIME](docs/images/stats-spells.png)
 ![SPELL USAGE / OTHER STATS](docs/images/stats-other.png)
 
+## Fixed in this edition ##
+
+These bugs from the main randomizer are fixed here:
+
+- **Rare unbeatable seeds:** Rimuldar could be placed where it can't be reached without a key you
+  can't get.
+- **Generation could hang** on some seeds, most often with Random Map off or on a very small map.
+- **Repel in Dungeons was always on,** whether or not the option was ticked.
+- **"searched" text glitch:** with Fast Text on, searching on a chest could print a cut-off line
+  with a stray "4".
+- **NPCs could walk out of step** after a Treasure Guards fight in a town.
+- **Play Time hundredths:** the ending's Play Time could only show 59 of the 100 hundredths of a
+  second.
+- **Flash carts** couldn't open their in-game menu on the credits and stats screens.
+
 ## Known Issues ##
-
-These come from the main randomizer and are still present here. Fixes for each are written and
-waiting to be added:
-
-- **Rare unbeatable seeds:** occasionally Rimuldar can be placed where it can't be reached without a
-  key you can't get.
-- **Generation can hang** on some seeds, most often with Random Map off. If Randomize never
-  finishes, pick another seed.
-- **Repel in Dungeons is always on,** whether or not the option is ticked.
-- **"searched" text glitch:** with Fast Text on, searching on a chest can print a cut-off line with
-  a stray "4".
-- **NPCs can walk out of step** after a regular Treasure Guards fight in a town (Oops All Treasure
-  Guards has its own fix).
-
-Also:
 
 - **Dabbit edition ROMs and main-randomizer ROMs aren't interchangeable for races** (see above).
 - **The Windows app is unsigned,** so Windows SmartScreen warns the first time you run it

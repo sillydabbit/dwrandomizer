@@ -1882,6 +1882,31 @@ static void progressive_equipment(dw_rom *rom)
 }
 
 /**
+ * Finishes every NPC's step before a Treasure Guards battle freezes them.
+ *
+ * A guarded chest in a town starts a battle while NPCs are walking, which the
+ * game never does on its own. start_combat freezes the NPCs by setting bit 7
+ * of $8d at $e576, and the end of the battle clears $8d without finishing
+ * anyone's step, so an NPC caught mid-step is drawn out of place and turns
+ * mid-step from then on.
+ *
+ * Oops All Treasure Guards has the same problem and already carries the fix:
+ * a7_npc_freeze (bank_3_patch.asm) settles every NPC through
+ * exp_a7_npc_settle in the expansion bank, then does the three instructions it
+ * replaced. It does not depend on the guard table, so plain Treasure Guards
+ * uses the same hook rather than its own copy in the fixed bank. Maps without
+ * NPCs ($8d is $ff) are skipped. Installing it twice, when both options are
+ * on, writes the same bytes.
+ *
+ * @param rom The rom struct
+ */
+static void settle_npcs_for_battle(dw_rom *rom)
+{
+    add_hook(rom, JSR, 0xe576, A7_NPC_FREEZE);
+    nop(rom, 0xe579, 3);
+}
+
+/**
  * Adds "spike" tiles to chests and search locations that should be guarded
  *
  * @param rom The rom struct
@@ -1897,6 +1922,7 @@ static void treasure_guards(dw_rom *rom)
         return;
 
     printf("Adding important treasure guards...\n");
+    settle_npcs_for_battle(rom);
 
     for (i=0; i < 2; i++){
         if (should_be_guarded(search->item[i])) {
@@ -2057,6 +2083,21 @@ static void dwr_speed_hacks(dw_rom *rom)
 
         /* speed up the text */
         vpatch(rom, 0x7a33, 3, 0xea, 0xea, 0xea);
+
+        /*
+         * Searching on a chest prints "... searched the ground all about."
+         * and then loads the chest table into $0320-$039b. Without the
+         * per-letter frame wait, that text is still sitting in the PPU
+         * buffer at $0300, so the table overwrites it: the line stops after
+         * the 10th letter and the 11th becomes the first chest's map number.
+         * Wait one frame so the buffer is flushed before the table loads.
+         * Uses the last 6 bytes of the space freed at $e142.
+         */
+        vpatch(rom, 0xe1dc, 2, 0x84, 0xe1);  /* JMP $e184 instead of $e1fd */
+        vpatch(rom, 0xe184, 6,
+            0x20, 0x74, 0xff,  /* JSR $ff74   ; wait for NMI, flushes text */
+            0x4c, 0xfd, 0xe1   /* JMP $e1fd   ; continue opening the chest */
+        );
     }
 
     if (!SPEED_HACKS(rom))
@@ -2169,9 +2210,10 @@ static void no_keys(dw_rom *rom)
  */
 static void repel_mods(dw_rom *rom)
 {
-    if (REPEL_IN_DUNGEONS(rom))
+    if (REPEL_IN_DUNGEONS(rom)) {
         printf("Making repel work in dungeons...\n");
         vpatch(rom, 0xcf20, 2, 0xa9, 0x01);
+    }
 
     if (PERMANENT_REPEL(rom)) {
         printf("Making repel permanent...\n");

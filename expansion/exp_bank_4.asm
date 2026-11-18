@@ -12,6 +12,7 @@
     NMI_FLAGS      .dsb 1
     RAW_CHAR_FLAG  .dsb 1
     PPUATTR_LEN    .dsb 1
+    LAST_NOTE      .dsb 2  ; pulse 1 and 2 notes seen by the last nmi
 .ende
 .enum $40
     PRODUCT
@@ -1084,6 +1085,15 @@ credits_data:
     .db INSTR_SET_PPU
     .word $22c8
     .db "Crumps Brother"
+    .db INSTR_SET_PPU
+    ; Lines from here on are padded only as far as the text they overwrite
+    ; (rows 24 and 26 are blank when the credits start, on both the vanilla
+    ; and the skip-credits path). Re-check the padding if names move.
+    .word $2308
+    .db "juef"
+    .db INSTR_SET_PPU
+    .word $2348
+    .db "sillydabbit"
 
     .db INSTR_WAIT, 240
 
@@ -1114,6 +1124,41 @@ credits_data:
     .db INSTR_SET_PPU
     .word $2308
     .db "bunder2015    "
+    .db INSTR_SET_PPU
+    .word $2348
+    .db "Angel FM   "           ; covers "sillydabbit"
+
+    .db INSTR_WAIT, 240
+
+    ; second SPRITE WORK page: the heading stays; rows 20-26 still hold
+    ; page one's names, so blank them (REPEAT_CHAR writes count + 1 tiles)
+    .db INSTR_SET_PPU
+    .word $2148
+    .db "Avodroc42"             ; covers "Xarnax42"
+    .db INSTR_SET_PPU
+    .word $2188
+    .db "Dwedit    "            ; covers "Ryuseishin"
+    .db INSTR_SET_PPU
+    .word $21c8
+    .db "Zatrex17"              ; covers "mcgrew"
+    .db INSTR_SET_PPU
+    .word $2208
+    .db "HoodyTwoShoes"         ; covers "MisterHomes"
+    .db INSTR_SET_PPU
+    .word $2248
+    .db "sillydabbit"           ; covers "Invenerable"
+    .db INSTR_SET_PPU
+    .word $2288
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $22c8
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $2308
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $2348
+    .db INSTR_REPEAT_CHAR, 13, " "
 
 stats_data:
     .db INSTR_WAIT, 240
@@ -1836,7 +1881,41 @@ nmi:
     sta PPUADDR
     lda #%00011010
     sta PPUMASK     ; enable rendering
+
+    ; Read the controller once a frame and discard it. Nothing here uses the
+    ; buttons, but flash carts (Everdrive) open their in-game menu by watching
+    ; the game read $4016, so without this the menu can't be reached here.
+    ldx #7          ; 8 reads (7..0); 7 is odd, so it also strobes high
+    stx $4016
+    sta $4016       ; strobe low: A is still %00011010 (even)
+-   lda $4016
+    dex
+    bpl -
+
     jsr famistudio_update
+
+    ; FamiStudio writes a pulse channel's period high byte ($4003/$4007) only
+    ; when it changes, since that write restarts the waveform. A flash cart's
+    ; in-game menu can restore that register wrong, and the pitch then stays
+    ; off until the song happens to change it. Whenever a pulse channel starts
+    ; a new note, write FamiStudio's own copy of the high byte back, so a wrong
+    ; value lasts until the next note at most. The restart lands on the note's
+    ; first frame.
+    ldx #1
+-   lda famistudio_chn_note,x
+    cmp LAST_NOTE,x
+    beq +
+    sta LAST_NOTE,x
+    txa
+    asl a
+    asl a
+    tay             ; 0 or 4: $4003 or $4007
+    lda famistudio_pulse1_prev,x
+    bmi +           ; $80: nothing written yet
+    sta $4003,y
++   dex
+    bpl -
+
     pla
     tay
     pla

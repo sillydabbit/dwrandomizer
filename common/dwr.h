@@ -24,7 +24,7 @@
  * spoiler log. Bump it with each deploy. The title font has upper case,
  * digits, space and . - ! only; an even length centres exactly.
  */
-#define DABBIT_VERSION "1.1.0"
+#define DABBIT_VERSION "1.2.0"
 #define VERSION "DABBIT EDITION " DABBIT_VERSION
 
 #define DEFAULT_FLAGS "IVIAAVCAKACAAAAAAAAAAEAA"
