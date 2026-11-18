@@ -1084,6 +1084,15 @@ credits_data:
     .db INSTR_SET_PPU
     .word $22c8
     .db "Crumps Brother"
+    .db INSTR_SET_PPU
+    ; Lines from here on are padded only as far as the text they overwrite
+    ; (rows 24 and 26 are blank when the credits start, on both the vanilla
+    ; and the skip-credits path). Re-check the padding if names move.
+    .word $2308
+    .db "juef"
+    .db INSTR_SET_PPU
+    .word $2348
+    .db "sillydabbit"
 
     .db INSTR_WAIT, 240
 
@@ -1114,6 +1123,41 @@ credits_data:
     .db INSTR_SET_PPU
     .word $2308
     .db "bunder2015    "
+    .db INSTR_SET_PPU
+    .word $2348
+    .db "Angel FM   "           ; covers "sillydabbit"
+
+    .db INSTR_WAIT, 240
+
+    ; second SPRITE WORK page: the heading stays; rows 20-26 still hold
+    ; page one's names, so blank them (REPEAT_CHAR writes count + 1 tiles)
+    .db INSTR_SET_PPU
+    .word $2148
+    .db "Avodroc42"             ; covers "Xarnax42"
+    .db INSTR_SET_PPU
+    .word $2188
+    .db "Dwedit    "            ; covers "Ryuseishin"
+    .db INSTR_SET_PPU
+    .word $21c8
+    .db "Zatrex17"              ; covers "mcgrew"
+    .db INSTR_SET_PPU
+    .word $2208
+    .db "HoodyTwoShoes"         ; covers "MisterHomes"
+    .db INSTR_SET_PPU
+    .word $2248
+    .db "sillydabbit"           ; covers "Invenerable"
+    .db INSTR_SET_PPU
+    .word $2288
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $22c8
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $2308
+    .db INSTR_REPEAT_CHAR, 13, " "
+    .db INSTR_SET_PPU
+    .word $2348
+    .db INSTR_REPEAT_CHAR, 13, " "
 
 stats_data:
     .db INSTR_WAIT, 240
