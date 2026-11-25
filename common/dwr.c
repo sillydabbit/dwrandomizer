@@ -73,10 +73,12 @@ static void update_flags(dw_rom *rom)
         rom->flags[13] &= 0x3f;
         rom->flags[13] |= mt_rand(0, 2) << 6;
     }
-    /* Hard Stair Shuffle is Stair Shuffle with the cave entrances added to the
-     * pool, so everything that checks STAIR_SHUFFLE must see it as on. */
-    if (HARD_STAIR_SHUFFLE(rom))
-        rom->flags[2] |= 0x04;
+    /* Hard Mode is a setting of Stair Shuffle (user, 2026-11-25): it applies
+     * only when the stairs are shuffled. Once the random options have rolled,
+     * a Stair Shuffle that is off - or rolled off - turns it off too, so it
+     * never shuffles the stairs on its own. */
+    if (!STAIR_SHUFFLE(rom))
+        rom->flags[12] &= ~0xc0;
 }
 
 /**

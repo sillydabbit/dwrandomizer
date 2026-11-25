@@ -116,6 +116,41 @@ class Rom extends Uint8Array {
 /**
  * Initializes the user interface
  */
+/**
+ * Shows an option in its own row directly below another one, greyed out while
+ * the one above is off (ticked or random turns it on). It is used for Stair
+ * Shuffle's Hard Mode, which sits below Stair Shuffle in the bottom row of the
+ * Gameplay tab: every tab has six rows, so it takes the space under the last
+ * one instead of a cell of its own. A greyed-out option keeps its setting; the
+ * randomizer ignores Hard Mode when Stair Shuffle is off or rolls off.
+ *
+ * @param above The option it belongs to
+ * @param input The option to move below it
+ */
+function addRowBelow(above, input) {
+    let cell = input.closest('flagcontainer');
+    let parentCell = above.closest('flagcontainer');
+    let row = document.createElement('div');
+    parentCell.style.position = 'relative';
+    row.style.position = 'absolute';
+    row.style.top = '50px';     /* one grid row: index.css tabcontent */
+    row.style.left = '0';
+    row.style.right = '0';
+    while (cell.firstChild)
+        row.append(cell.firstChild);
+    parentCell.append(row);
+    let sync = () => {
+        let on = above.checked || above.indeterminate;
+        input.disabled = !on;
+        row.style.opacity = on ? '' : '0.45';   /* as Generate Map greys out */
+    };
+    above.change(sync);
+    // flags typed in, or read from the URL, can change the option above
+    let updateInputs = ui.updateInputs.bind(ui);
+    ui.updateInputs = () => { updateInputs(); sync(); };
+    sync();
+}
+
 function setup_ui() {
     if (!localStorage.flags)
         localStorage.flags = 'IVIAAVCAKACAAAAAAAAAAEAA'
@@ -149,10 +184,11 @@ function setup_ui() {
         'Experience requirements for each level will be randomized.');
     ui.addTriOption('Gameplay',  7,  2, 6, 'Heal/Hurt Before "More"',
         'HEAL must come before HEALMORE; HURT before HURTMORE.');
-    ui.addTriOption('Gameplay', 10,  2, 2, 'Stair Shuffle',
+    let stairShuffle = ui.addTriOption('Gameplay', 10,  2, 2, 'Stair Shuffle',
         'Where stairs take you inside dungeons will be randomized.');
-    ui.addTriOption('Gameplay', 11, 12, 6, 'Hard Stair Shuffle',
-        'Stair Shuffle, and cave entrances can lead to any dungeon floor.');
+    let hardMode = ui.addTriOption('Gameplay', 11, 12, 6, 'Hard Mode',
+        'Cave entrances can lead to any dungeon floor.');
+    addRowBelow(stairShuffle, hardMode);
 
     ui.addTriOption('Features',  0,  3, 6, 'Enable Menu Wrapping',
         'This enables cursor wrapping in menus.');
