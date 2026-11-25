@@ -242,6 +242,9 @@ static const struct {
     { TAB_GAMEPLAY,   1, 0, TRUE,  "Random XP Requirements" },
     { TAB_GAMEPLAY,   2, 6, TRUE,  "Heal/Hurt Before \"More\"" },
     { TAB_GAMEPLAY,   2, 2, TRUE,  "Stair Shuffle" },
+#ifdef HARD_STAIR_SHUFFLE
+    { TAB_GAMEPLAY,  12, 6, TRUE,  "Hard Stair Shuffle" },
+#endif
     { TAB_FEATURES,   3, 6, TRUE,  "Enable Menu Wrapping" },
     { TAB_FEATURES,   3, 4, TRUE,  "Enable Death Necklace" },
     { TAB_FEATURES,   3, 2, TRUE,  "Enable Torches In Battle" },
@@ -2403,12 +2406,20 @@ static void add_entrance_paths(char **pos, char *end, stair_model *md, int e)
     add_path_nodes(pos, end, md, 0, "");
 }
 
-static void add_navigation(char **pos, char *end, stair_model *md)
+static void add_navigation(char **pos, char *end, dw_rom *rom,
+        stair_model *md)
 {
     int e;
+    BOOL hard = FALSE;
 
-    /* No table of where each entrance lands: an entrance always lands on
-     * its vanilla stair, and Locations already gives its overworld tile. */
+    /* With plain Stair Shuffle an entrance always lands on its vanilla stair,
+     * and Locations already gives its overworld tile. Hard Stair Shuffle can
+     * land it on any floor, so each block's heading names that floor. */
+#ifdef HARD_STAIR_SHUFFLE
+    hard = HARD_STAIR_SHUFFLE(rom) != 0;
+#else
+    (void)rom;
+#endif
     add(pos, end, "\nRoutes from each entrance\n\n");
     add(pos, end,
         "There is one block for each dungeon entrance, listing the routes from "
@@ -2419,9 +2430,16 @@ static void add_navigation(char **pos, char *end, stair_model *md)
         "walked back the way it came, since\nstairs go both ways. Only the "
         "shortest route to each place is shown. Stairs\nthat no route needs "
         "are left out.\n");
+    if (hard)
+        add(pos, end, "\nWith Hard Stair Shuffle an entrance can lead to any "
+            "floor. Each block\nsays which floor its entrance lands on.\n");
 
     for (e=0; e < ENTRANCE_COUNT; e++) {
-        add(pos, end, "\n[%s]\n", entrances[e].name);
+        if (hard)
+            add(pos, end, "\n[%s] - lands on %s\n", entrances[e].name,
+                    map_name(floors[TILE_FLOOR(md->start[e])]));
+        else
+            add(pos, end, "\n[%s]\n", entrances[e].name);
         add_entrance_paths(pos, end, md, e);
     }
 }
@@ -2449,7 +2467,7 @@ static BOOL add_stairs(char **pos, char *end, dw_rom *rom)
         walk(md, md->start[e], md->walks[e]);
     }
     add_key_paths(pos, end, rom, md);
-    add_navigation(pos, end, md);
+    add_navigation(pos, end, rom, md);
     free(md);
     return TRUE;
 }
