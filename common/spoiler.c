@@ -243,7 +243,7 @@ static const struct {
     { TAB_GAMEPLAY,   2, 6, TRUE,  "Heal/Hurt Before \"More\"" },
     { TAB_GAMEPLAY,   2, 2, TRUE,  "Stair Shuffle" },
 #ifdef HARD_STAIR_SHUFFLE
-    { TAB_GAMEPLAY,  12, 6, TRUE,  "Hard Stair Shuffle" },
+    { TAB_GAMEPLAY,  12, 6, TRUE,  "Stair Shuffle: Hard Mode" },
 #endif
     { TAB_FEATURES,   3, 6, TRUE,  "Enable Menu Wrapping" },
     { TAB_FEATURES,   3, 4, TRUE,  "Enable Death Necklace" },
@@ -2413,8 +2413,9 @@ static void add_navigation(char **pos, char *end, dw_rom *rom,
     BOOL hard = FALSE;
 
     /* With plain Stair Shuffle an entrance always lands on its vanilla stair,
-     * and Locations already gives its overworld tile. Hard Stair Shuffle can
-     * land it on any floor, so each block's heading names that floor. */
+     * and Locations already gives its overworld tile. Stair Shuffle's Hard
+     * Mode can land it on any floor, so each block's heading names that
+     * floor. */
 #ifdef HARD_STAIR_SHUFFLE
     hard = HARD_STAIR_SHUFFLE(rom) != 0;
 #else
@@ -2431,8 +2432,8 @@ static void add_navigation(char **pos, char *end, dw_rom *rom,
         "shortest route to each place is shown. Stairs\nthat no route needs "
         "are left out.\n");
     if (hard)
-        add(pos, end, "\nWith Hard Stair Shuffle an entrance can lead to any "
-            "floor. Each block\nsays which floor its entrance lands on.\n");
+        add(pos, end, "\nWith Hard Mode on, an entrance can lead to any floor. "
+            "Each block says\nwhich floor its entrance lands on.\n");
 
     for (e=0; e < ENTRANCE_COUNT; e++) {
         if (hard)
