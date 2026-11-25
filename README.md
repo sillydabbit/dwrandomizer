@@ -2,9 +2,9 @@
 
 This is an unofficial fork of [mcgrew's Dragon Warrior Randomizer](https://github.com/mcgrew/dwrandomizer),
 built on its 3.0.4 code. It adds a few new options, a spoiler log with an optional map, 53 more
-hero sprites from the community and a bigger end-of-game stats screen, and keeps everything else
-from the main randomizer exactly as it was. If you want the official, tuned experience, use
-[dwrandomizer.com](https://dwrandomizer.com/release).
+hero sprites from the community, five more ending songs and a bigger end-of-game stats screen,
+and keeps everything else from the main randomizer exactly as it was. If you want the official,
+tuned experience, use [dwrandomizer.com](https://dwrandomizer.com/release).
 
 **Play it here: [sillydabbit.github.io/dwrandomizer](https://sillydabbit.github.io/dwrandomizer/)**, or
 download the Windows app from the [latest release](https://github.com/sillydabbit/dwrandomizer/releases/latest).
@@ -107,6 +107,15 @@ of the 100.
 ![KEY ITEMS / TIME](docs/images/stats-key-items.png)
 ![SPELL / LEVEL / TIME](docs/images/stats-spells.png)
 ![SPELL USAGE / OTHER STATS](docs/images/stats-other.png)
+
+#### More ending music ####
+*Always on*
+
+Five more songs join the music the credits and stats screens pick from, now 24 in all:
+**Ocean Waves**, **Inner Mountains** and **Tower in the Sky** from *Crystalis*, and the ending
+themes of *The Legend of Zelda* and *Zelda II: The Adventure of Link*. Each one loops cleanly,
+and the Zelda ending plays its opening once before looping. As before, the song is picked at
+random each time you generate a ROM; it isn't part of the seed or the flags.
 
 ## Fixed in this edition ##
 
