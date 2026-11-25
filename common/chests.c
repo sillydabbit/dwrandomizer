@@ -171,27 +171,74 @@ static const uint8_t tantegel_spots[][2] = {
     { 1, 15}, { 2, 15}, { 3, 15}, {16, 15}, {24, 21},
 };
 
+/** Whether a map is part of Charlock: the castle, its throne room or a cave. */
+static inline BOOL is_charlock_map(uint8_t map)
+{
+    return map == CHARLOCK || map == CHARLOCK_THRONE_ROOM
+            || (map >= CHARLOCK_CAVE_1 && map <= CHARLOCK_CAVE_6);
+}
+
+/**
+ * Whether a map is one of the floors Stair Shuffle can reroute: Charlock's two
+ * town floors and every cave but Swamp Cave. chest_paths() records, for each
+ * chest on these floors, which cave entrances reach it.
+ */
+static inline BOOL is_stair_floor(uint8_t map)
+{
+    return map == CHARLOCK || map == CHARLOCK_THRONE_ROOM
+            || (map >= CHARLOCK_CAVE_1 && map <= ERDRICKS_CAVE_2
+                && map != SWAMP_CAVE);
+}
+
+/* chest_access bits set by chest_paths() for a chest reached, with keys, from
+ * the Tablet Cave, Mountain Cave and Garin's Grave entrances */
+#define TABLET_ACCESS   0x10
+#define MOUNTAIN_ACCESS 0x20
+#define GRAVE_ACCESS    0x40
+#define OVERWORLD_DUNGEON_ACCESS (TABLET_ACCESS | MOUNTAIN_ACCESS | GRAVE_ACCESS)
+
+/**
+ * Whether a chest belongs to Charlock's dungeons. Without Stair Shuffle that is
+ * the map it is on. With it the stairs decide (user, 2026-11-25: Stair Shuffle
+ * splits the floors into the Overworld Dungeons and the Charlock Dungeons): a
+ * chest on a shuffled floor is Charlock's only when no other cave entrance
+ * reaches it, so a Charlock floor that rolled into an overworld dungeon is not
+ * Charlock's, and a Grave or Mountain floor reached only through Charlock is.
+ *
+ * @param rom The rom struct
+ * @param i The chest's index
+ * @return TRUE if the chest can only be reached through Charlock
+ */
+static BOOL charlock_chest(dw_rom *rom, size_t i)
+{
+    uint8_t map = rom->chests[i].map;
+
+    if (STAIR_SHUFFLE(rom) && is_stair_floor(map))
+        return !(rom->chest_access[i] & OVERWORLD_DUNGEON_ACCESS);
+    return is_charlock_map(map);
+}
+
 /**
  * Ranks a chest elsewhere as the one to move into Tantegel castle when no
  * castle chest can be made gold. Lower is better: a gold chest outside
  * Charlock, then a gold chest in Charlock (taking gold out of Charlock is
  * harmless), then the cheapest junk chest, which is overwritten with gold.
  *
- * @param chest The chest to be ranked
+ * @param rom The rom struct
+ * @param i The index of the chest to be ranked
  * @return A rank, or -1 if the chest must stay where it is
  */
-static int gold_mover_rank(dw_chest *chest)
+static int gold_mover_rank(dw_rom *rom, size_t i)
 {
     int rank;
+    dw_chest *chest = &rom->chests[i];
 
     if (chest->map == TANTEGEL || chest->map == TANTEGEL_THRONE_ROOM)
         return -1;
     if (is_static_chest(chest) || is_quest_item(chest->item))
         return -1;
     if (is_gold_chest(chest->item))
-        return (chest->map == CHARLOCK || chest->map == CHARLOCK_THRONE_ROOM
-                || (chest->map >= CHARLOCK_CAVE_1
-                    && chest->map <= CHARLOCK_CAVE_6)) ? 1 : 0;
+        return charlock_chest(rom, i) ? 1 : 0;
     rank = gold_candidate_rank(chest);
     return rank < 0 ? -1 : 2 + rank;
 }
@@ -224,7 +271,7 @@ static void add_gold_chest_to_tantegel(dw_rom *rom)
     for (i=0; i < CHEST_COUNT; i++) {
         if (chest[i].item == KEY)
             continue;
-        rank = gold_mover_rank(&chest[i]);
+        rank = gold_mover_rank(rom, i);
         if (rank >= 0 && rank < best_rank) {
             best_rank = rank;
             mover = i;
@@ -289,13 +336,6 @@ static uint8_t grind_find(uint8_t *parent, uint8_t m)
     return m;
 }
 
-/** Whether a map is part of Charlock: the castle, its throne room or a cave. */
-static inline BOOL is_charlock_map(uint8_t map)
-{
-    return map == CHARLOCK || map == CHARLOCK_THRONE_ROOM
-            || (map >= CHARLOCK_CAVE_1 && map <= CHARLOCK_CAVE_6);
-}
-
 /**
  * Whether a chest's item can count towards starting the grind. Erdrick's
  * Sword and Armor never do: with Progressive Equipment they are refused until
@@ -307,26 +347,22 @@ static inline BOOL grind_item(dw_chest *chest)
 }
 
 /**
- * Whether a chest counts towards starting the grind. Chests on a Charlock map
- * never do, whatever Open Charlock or Stair Shuffle make of the route (user,
- * 2026-11-14: the grind must never need a Charlock chest opened).
- */
-static inline BOOL grind_counts(dw_chest *chest)
-{
-    return grind_item(chest) && !is_charlock_map(chest->map);
-}
-
-/**
  * Checks whether the gold grind can be started before Charlock. Maps joined
  * by warps that do not touch the overworld form a group: one trip, no
  * overworld load in between. The throne room's group T is always the end of
  * the trip (the death warp lands there). The grind starts if some group C
  * other than Charlock's own has chests(C) + chests(T) - 1 >= 8, or chests(T)
  * - 1 >= 8 when C is T (the -1 is the gold chest, which must come after the
- * list is full). Chests on Charlock maps are never counted, and a group is
- * Charlock's own when its only way in from the overworld is Charlock's
- * entrance - with or without Open Charlock: the grind must never need
- * Charlock.
+ * list is full). Charlock's chests (charlock_chest()) are never counted, and
+ * a group is Charlock's own when its only way in from the overworld is
+ * Charlock's entrance - with or without Open Charlock: the grind must never
+ * need Charlock.
+ *
+ * With Stair Shuffle the stairs can join any floors, so a group of maps is no
+ * longer one walk: the shuffled floors leave the groups, and each cave
+ * entrance is a trip of its own instead - the chests chest_paths() saw it
+ * reach, plus the group of the town it starts in (Garin's Grave starts in
+ * Garinham).
  *
  * @param rom The rom struct
  * @param charlock_only Set per map: TRUE if it is in a Charlock-only group
@@ -334,12 +370,17 @@ static inline BOOL grind_counts(dw_chest *chest)
  */
 static BOOL early_grind_possible(dw_rom *rom, BOOL *charlock_only)
 {
+    static const struct { dw_warp_index warp; uint8_t access; } caves[] = {
+        { WARP_ERDRICKS_CAVE, TABLET_ACCESS },
+        { WARP_MOUNTAIN_CAVE, MOUNTAIN_ACCESS },
+        { WARP_GARINS_GRAVE,  GRAVE_ACCESS },
+    };
     uint8_t parent[ERDRICKS_CAVE_2 + 1], a, b, g, t_group;
     int count[ERDRICKS_CAVE_2 + 1] = {0}, other_entry[ERDRICKS_CAVE_2 + 1] = {0};
-    int t;
-    size_t i;
+    int t, n;
+    size_t i, e;
     dw_warp *from = rom->map.warps_from, *to = rom->map.warps_to;
-    BOOL ok = FALSE;
+    BOOL ok = FALSE, shuffled = STAIR_SHUFFLE(rom) != 0;
 
     for (i=0; i <= ERDRICKS_CAVE_2; i++)
         parent[i] = (uint8_t)i;
@@ -349,6 +390,8 @@ static BOOL early_grind_possible(dw_rom *rom, BOOL *charlock_only)
         if (a > ERDRICKS_CAVE_2 || b > ERDRICKS_CAVE_2)
             continue;
         if (a == NO_MAP || b == NO_MAP || a == OVERWORLD || b == OVERWORLD)
+            continue;
+        if (shuffled && (is_stair_floor(a) || is_stair_floor(b)))
             continue;
         parent[grind_find(parent, a)] = grind_find(parent, b);
     }
@@ -365,18 +408,41 @@ static BOOL early_grind_possible(dw_rom *rom, BOOL *charlock_only)
             other_entry[grind_find(parent, a)] = 1;
     }
     for (i=0; i < CHEST_COUNT; i++) {
-        if (rom->chests[i].map <= ERDRICKS_CAVE_2
-                && grind_counts(&rom->chests[i]))
-            count[grind_find(parent, rom->chests[i].map)]++;
+        a = rom->chests[i].map;
+        if (a > ERDRICKS_CAVE_2 || (shuffled && is_stair_floor(a)))
+            continue;
+        if (grind_item(&rom->chests[i]) && !charlock_chest(rom, i))
+            count[grind_find(parent, a)]++;
     }
     t_group = grind_find(parent, TANTEGEL_THRONE_ROOM);
     t = count[t_group];
     for (i=0; i <= ERDRICKS_CAVE_2; i++) {
         g = grind_find(parent, (uint8_t)i);
-        charlock_only[i] = !other_entry[g] && g != t_group;
+        charlock_only[i] = !other_entry[g] && g != t_group
+                && !(shuffled && is_stair_floor((uint8_t)i));
         if (g != i || charlock_only[i] || !count[g])
             continue;
         if ((g == t_group && t - 1 >= 8) || (g != t_group && count[g] + t - 1 >= 8))
+            ok = TRUE;
+    }
+    if (!shuffled)
+        return ok;
+
+    for (e=0; e < sizeof(caves) / sizeof(caves[0]); e++) {
+        n = 0;
+        for (i=0; i < CHEST_COUNT; i++) {
+            if (is_stair_floor(rom->chests[i].map)
+                    && grind_item(&rom->chests[i])
+                    && (rom->chest_access[i] & caves[e].access))
+                n++;
+        }
+        a = from[caves[e].warp].map;
+        if (a != OVERWORLD && a <= ERDRICKS_CAVE_2 && !is_stair_floor(a)) {
+            g = grind_find(parent, a);
+            if (g != t_group)
+                n += count[g];
+        }
+        if (n && n + t - 1 >= 8)
             ok = TRUE;
     }
     return ok;
@@ -407,11 +473,16 @@ static void guarantee_early_grind(dw_rom *rom)
         for (i=0; i < CHEST_COUNT; i++) {
             if (chest[i].map > ERDRICKS_CAVE_2)
                 continue;
-            if (!charlock_only[chest[i].map] && !is_charlock_map(chest[i].map))
+            if (STAIR_SHUFFLE(rom) && is_stair_floor(chest[i].map)) {
+                if (!charlock_chest(rom, i))
+                    continue;
+            } else if (!charlock_only[chest[i].map]
+                    && !charlock_chest(rom, i)) {
                 continue;
+            }
             if (!grind_item(&chest[i]))
                 continue;
-            rank = gold_mover_rank(&chest[i]);
+            rank = gold_mover_rank(rom, i);
             if (rank >= 0 && rank < best_rank) {
                 best_rank = rank;
                 mover = i;
@@ -492,10 +563,10 @@ static void castle_gold_chest(dw_rom *rom)
         if (chest[i].map == TANTEGEL_THRONE_ROOM)
             continue;
         /* never swap into Charlock: a key item moved in there can make the seed
-         * unwinnable, which is what check_quest_items() exists to prevent */
-        if (chest[i].map == CHARLOCK || chest[i].map == CHARLOCK_THRONE_ROOM
-                || (chest[i].map >= CHARLOCK_CAVE_1
-                    && chest[i].map <= CHARLOCK_CAVE_6))
+         * unwinnable, which is what check_quest_items() exists to prevent.
+         * With Stair Shuffle that means any chest reached only through
+         * Charlock, whatever map it is on (charlock_chest()). */
+        if (charlock_chest(rom, i))
             continue;
         donor = i;
         break;
