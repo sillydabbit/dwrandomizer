@@ -175,6 +175,9 @@ exp_record_item_time_for_slot: ; A = slot index (0..ITEM_ROW_COUNT-1).
     clc
     adc $3c
     tax                 ; X = byte offset into ITEM_TIMES (slot*3)
+exp_record_time_at_x:   ; X = byte offset from ITEM_TIMES. The Magic Key uses
+                        ; this entry with KEY_TIME's offset, which lies past
+                        ; the ten slots.
     lda ITEM_TIMES,x
     ora ITEM_TIMES+1,x
     ora ITEM_TIMES+2,x
@@ -194,6 +197,58 @@ exp_item_slot_table:    ; item id ($0-$f) -> ITEM_TIMES slot, $ff = untracked.
                         ; Erdrick equipment pieces have no item id.
     .db $ff, $ff, $ff, $ff, $ff, $06, $09, $04
     .db $ff, $ff, $02, $05, $03, $07, $08, $ff
+
+; *** Magic Key timestamp ***
+; One write-once time at KEY_TIME. The throne room's first chest always holds a
+; key, so "the first key acquired" would read zero in every seed. Instead:
+;   - holding a key at the moment the player first leaves the throne room ->
+;     that moment (exp_throne_exit);
+;   - otherwise the first key gained after leaving, from a chest, a search spot
+;     or a key shop (exp_key_gained). Leaving by the stairs spends a key on the
+;     throne room door, so with the one starting key this is the usual case.
+; Keys gained inside the throne room before leaving are covered by the first
+; rule. The stats page shows this row instead of Fighter's Ring unless No Keys
+; is on; it is recorded either way.
+
+KEY_TIME_OFFSET EQU KEY_TIME - ITEM_TIMES
+
+exp_throne_exit:        ; dispatch entry 26, from the map-load hook at $af1f.
+                        ; Does what the 12 bytes it replaced did - set $df bit
+                        ; 3 when the new map is not the throne room (5) - and
+                        ; checks for a key on the one load that first sets it.
+    txa                 ; X is kept for the map-load routine (the stub keeps
+    pha                 ; Y, which exec_expansion_sub's index overwrites)
+    lda $45             ; map being loaded
+    cmp #$05
+    beq @done           ; the throne room itself: start, continue or death
+    lda $df
+    and #$08
+    bne @done           ; has left before - this is not the first exit
+    lda $df
+    ora #$08
+    sta $df
+    lda $bf
+    beq @done           ; no key in hand: the first key gained will count
+    ldx #KEY_TIME_OFFSET
+    jsr exp_record_time_at_x
+@done:
+    pla
+    tax
+    jmp exp_load_last_bank
+
+exp_key_gained:         ; dispatch entry 28. A key was just added ($bf already
+                        ; incremented) by a chest or search spot (key_from_chest)
+                        ; or a key shop (key_from_shop).
+    txa                 ; X is kept for the caller; Y is kept by the stubs,
+    pha                 ; since exec_expansion_sub's index overwrites it
+    lda $df
+    and #$08
+    beq +               ; still in the throne room: the exit decides instead
+    ldx #KEY_TIME_OFFSET
+    jsr exp_record_time_at_x   ; write-once, so only the first key counts
++   pla
+    tax
+    jmp exp_load_last_bank
 
 exp_grant_erdricks_sword:  ; dispatch entry 18. Erdrick's Sword and Armor are
                            ; written straight into the packed equipment byte $be

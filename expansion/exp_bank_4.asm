@@ -487,6 +487,12 @@ add_stats_addr:             ; adds A to the script pointer
 ;     7   Staff of Rain        inventory
 ;     8   Rainbow Drop         inventory (NPC grant)
 ;     9   Fighter's Ring       inventory
+;    10   Magic Key            KEY_TIME (exp_throne_exit / exp_key_gained)
+;
+; Slot 10 is not a row of its own: it takes row 9's place, instead of
+; Fighter's Ring, whenever magic_key_row is set - which setup_expansion() does
+; unless No Keys is on. Its time is KEY_TIME, outside the ten ITEM_TIMES slots;
+; SLOT_OFFSET reaches it by offset like any other slot.
 ;
 ; To add an item: bump ITEM_ROW_COUNT, append to SLOT_OFFSET, name_offset
 ; and item_names here, add its id to item_slot_table in bank_3_patch.asm,
@@ -508,11 +514,15 @@ ROW_TAIL_WIDTH EQU 2       ; cols 28-29, the columns after the time. Written as
                            ;   item row:      18 + 2     + 8 + 2 = ITEM_ROW_WIDTH
                            ;   spell row: 9 + 4 + 4 + 3 + 8 + 2 = ITEM_ROW_WIDTH
 
-SLOT_OFFSET:               ; slot -> byte offset into ITEM_TIMES (slot * 3)
-    .db 0, 3, 6, 9, 12, 15, 18, 21, 24, 27
+RING_SLOT      EQU 9
+KEY_SLOT       EQU 10
+
+SLOT_OFFSET:               ; slot -> byte offset from ITEM_TIMES (slot * 3;
+                           ; the Magic Key's KEY_TIME lies further on)
+    .db 0, 3, 6, 9, 12, 15, 18, 21, 24, 27, KEY_TIME - ITEM_TIMES
 
 name_offset:               ; slot -> byte offset into item_names (slot * 18)
-    .db 0, 18, 36, 54, 72, 90, 108, 126, 144, 162
+    .db 0, 18, 36, 54, 72, 90, 108, 126, 144, 162, 180
 
 item_names:
     .db "Erdrick's Sword   "
@@ -525,6 +535,7 @@ item_names:
     .db "Staff of Rain     "
     .db "Rainbow Drop      "
     .db "Fighter's Ring    "
+    .db "Magic Key         "
 
 ; *** Spell acquisition page ***
 ; Same shape as the item page: 10 rows on the same grid, under the header
@@ -890,6 +901,15 @@ render_item_row:             ; A = slot number, PPU_POSITION at the row start.
     jsr print_spaces_x        ; cols 28-29 - the row is now fully overwritten
     rts
 
+row_slot:                    ; A = a row's slot number (0..ITEM_ROW_COUNT-1).
+                              ; Returns A = the slot that row shows. Clobbers X.
+    cmp #RING_SLOT
+    bne +
+    ldx magic_key_row
+    beq +                     ; No Keys: keep Fighter's Ring
+    lda #KEY_SLOT
++   rts
+
 render_item_times:            ; entry point for the INSTR_ITEM_TIMES opcode.
                               ; Builds the list of acquired slots, sorts it by
                               ; timestamp, then draws ITEM_ROW_COUNT full-width
@@ -900,17 +920,22 @@ render_item_times:            ; entry point for the INSTR_ITEM_TIMES opcode.
     sta SORT_COUNT
 @build_loop:
     lda CUR_SLOT
+    jsr row_slot              ; the slot this row shows: Fighter's Ring's row
+    pha                       ; becomes the Magic Key's unless No Keys is on
     tax
     lda SLOT_OFFSET,x
     tax
     lda ITEM_TIMES,x
     ora ITEM_TIMES+1,x
     ora ITEM_TIMES+2,x
-    beq @build_skip
+    beq @build_drop
     ldy SORT_COUNT
-    lda CUR_SLOT
+    pla
     sta SORT_LIST,y
     inc SORT_COUNT
+    bne @build_skip           ; always taken: SORT_COUNT is at least 1 now
+@build_drop:
+    pla
 @build_skip:
     inc CUR_SLOT
     lda CUR_SLOT
@@ -1873,5 +1898,10 @@ spell_level_table:     ; spell index -> the level at which that spell is learned
                        ; seed - Permanent Repel and No Hurtmore set the level to
                        ; 255, so those bits never appear in the stats table.
     .db 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+magic_key_row:         ; $bf0a, expansion offset 0x7f0a. Nonzero = the KEY
+                       ; ITEMS page shows the Magic Key in Fighter's Ring's row.
+                       ; Set by setup_expansion() unless No Keys is on.
+    .db 0
 
 .org $c000
