@@ -2501,12 +2501,31 @@ void setup_expansion(dw_rom *rom)
     add_hook(rom, JSR, 0x3517, STEP_COUNTER);  /* UpSynced    */
     nop(rom, 0x351a, 1);
 
+    /* Magic Key timestamp: the time the player first leaves the throne room
+     * if they are holding a key then, otherwise the first key gained after.
+     * $af1f (bank 0) is the 12-byte block in the map-load routine that sets
+     * $df bit 3, "has left the throne room" - the only code that sets it, and
+     * run by stairs, Return and Wings alike. THRONE_EXIT sets the bit itself.
+     * $e22a is "lda $bf / cmp #$06 / bne" in the TAKE code for a key (chests
+     * and search spots); $d834 is "sta $bd / inc $bf" in the key shop. */
+    add_hook(rom, JSR, 0x2f1f, THRONE_EXIT);
+    nop(rom, 0x2f22, 9);
+    add_hook(rom, JSR, 0xe22a, KEY_FROM_CHEST);
+    nop(rom, 0xe22d, 3);
+    add_hook(rom, JSR, 0xd834, KEY_FROM_SHOP);
+    nop(rom, 0xd837, 1);
+
     bank_3_patch(rom);
     fill_expansion(rom);
 
     /* Must follow fill_expansion(): that writes the zeroed placeholder at
      * expansion offset 0x7f00 that this fills in. */
     write_spell_levels(rom);
+
+    /* magic_key_row, at $bf0a in bank 4: the KEY ITEMS page lists the Magic
+     * Key in place of Fighter's Ring, unless No Keys has taken every key out
+     * of the game. Also must follow fill_expansion(). */
+    rom->expansion[0x7f0a] = NO_KEYS(rom) ? 0 : 1;
 
     int track = mt_rand(0, track_count - 1);
     add_music(rom, track);

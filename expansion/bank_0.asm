@@ -24,6 +24,12 @@ WIN_LEVEL     EQU $67bb ; the player's level when the game was won, 16-bit LE.
                         ; wide, right-aligned with leading zeros blanked, exactly
                         ; like every other OTHER STATS figure. Frozen by
                         ; snapshot_timer; inside what init_save_ram clears.
+KEY_TIME      EQU $67bd ; Magic Key timestamp, 3 bytes LE, write-once: the
+                        ; moment the player left the throne room holding a key,
+                        ; or else the first key gained after leaving it. Kept
+                        ; apart from ITEM_TIMES, whose next slot ($677e) would
+                        ; run into $6780 (see SPELL_TIMES). Inside what
+                        ; init_save_ram clears.
 STEP_COUNT    EQU $6804 ; step counter, 16-bit LE
 ITEM_ADD_ID   EQU $6806 ; the item id being added, captured by stash_and_add
                         ; before b3_e01b destroys it. Transient - written and

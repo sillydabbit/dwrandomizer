@@ -458,7 +458,14 @@ exp_dispatch:
 .word exp_grant_erdricks_armor ; 20
 .word exp_record_spell_time    ; 22
 .word exp_snapshot_spell_time  ; 24
-; .word exp_torch_in_battle      ; 26
+.word exp_throne_exit          ; 26
+.word exp_key_gained           ; 28
+; .word exp_torch_in_battle      ; 30
+
+@dispatch_end:
+.if @dispatch_end > $c4f5
+    .error "the $c288 window has overrun $c4f5"
+.endif
 
 .org $c4f5
 
@@ -661,7 +668,69 @@ a8_erdrick_gate:
 
 .org $c9b5
 
-.org $f232
-    ; potentially unused data
+.org $f232              ; unused vanilla data; dwr.c clears $f232-$f35b to $ff
+                        ; in every ROM before bank_3_patch() writes this. Used
+                        ; because the $c288 window is nearly full on main.
+
+; *** Magic Key timestamp ***
+; The logic is in exp_bank_3 (exp_throne_exit, exp_key_gained); these are the
+; footholds. The rule: if the player is holding a key at the moment they first
+; leave the throne room, that moment is the key's time. If not, the first key
+; gained afterwards - from a chest, a search spot or a key shop - is.
+
+throne_exit:            ; replaces the 12-byte block at $af1f in bank 0, inside
+                        ; the map-load routine that every map change runs
+                        ; (stairs, doors, Return, Wings). That block is the only
+                        ; code in the game that sets $df bit 3, "has left the
+                        ; throne room"; exp_throne_exit does it now. Nothing
+                        ; after the hook reads A or the flags; X is kept by
+                        ; the expansion routine and Y here.
+    tya
+    pha
+    ldy #26
+    jsr exec_expansion_sub
+    pla
+    tay
+    rts
+
+key_from_chest:         ; replaces "lda $bf / cmp #$06 / bne $e238" at $e22a,
+                        ; in the TAKE code for a key. $e23a, just past the
+                        ; original "inc $bf", is also reached by the herb path,
+                        ; so the hook has to sit before the increment rather
+                        ; than on it.
+    lda $bf
+    cmp #$06
+    beq +               ; six keys: back to the "too many" path at $e230
+    inc $bf
+    pla                 ; drop the return address and carry on as the original
+    pla                 ; did after its "inc $bf"
+    tya                 ; Y = the chest's table index; kept, as the original
+                        ; path never touched it
+    pha
+    ldy #28
+    jsr exec_expansion_sub
+    pla
+    tay
+    jmp $e23a
++   rts
+
+key_from_shop:          ; replaces "sta $bd / inc $bf" at $d834, the key shop's
+                        ; purchase. The "jsr $c6f0" after it reads an inline
+                        ; byte through its return address, so the hook cannot
+                        ; cover it and tail-call - it stops just short.
+    sta $bd
+    inc $bf
+    tya
+    pha
+    ldy #28
+    jsr exec_expansion_sub
+    pla
+    tay
+    rts
+
+.if $ > $f35b
+    .error "the $f232 window has overrun $f35b"
+.endif
+
 .org $f35b
 

@@ -97,7 +97,9 @@ just generated, and only if that ROM was made with the spoiler log on.
 After the credits, three new pages join the stats loop:
 
 - **KEY ITEMS / TIME** - each key item you found and the play time you first picked it up, in the
-  order you found them. Your route through the seed, at a glance.
+  order you found them. Your route through the seed, at a glance. When the seed has Magic Keys,
+  the **Magic Key** takes the Fighter's Ring's row: its time is when you first left the throne
+  room with a key in hand, or else the first key you got after that.
 - **SPELL / LEVEL / TIME** - each spell you learned, the level you learned it at, and when.
 - **OTHER STATS** - the original stats plus **Steps** and the **Level** you finished at.
 
